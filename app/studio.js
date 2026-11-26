@@ -521,7 +521,7 @@ function exportRange(duration){
 function recordFrames(context,length,from,duration,signal){
   const started=context.currentTime;
   return new Promise((resolve,reject)=>{
-    let frame;
+    let frame, previous=-1;
     const abort=()=>{
       cancelAnimationFrame(frame);
       reject(new DOMException('中止しました','AbortError'));
@@ -530,8 +530,13 @@ function recordFrames(context,length,from,duration,signal){
     function next(){
       try {
         const elapsed=context.currentTime-started;
-        draw(from+Math.min(elapsed,length),duration);
-        status(`書き出し ${Math.min(100,Math.floor(elapsed/length*100))}%`);
+        const index=Math.floor(Math.min(elapsed,length)*30);
+        if(index!==previous){
+          draw(from+Math.min(elapsed,length),duration);
+          previous=index;
+          const message=`書き出し ${Math.min(100,Math.floor(elapsed/length*100))}%`;
+          if($('localStatus').textContent!==message)status(message);
+        }
         if(elapsed>=length){signal.removeEventListener('abort',abort);resolve()}
         else frame=requestAnimationFrame(next);
       } catch (error) {
