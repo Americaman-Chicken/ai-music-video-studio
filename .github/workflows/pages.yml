@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
       - name: Version the Service Worker for this deployment
-        run: sed -i "s/mv-studio-v3.3/mv-studio-${GITHUB_SHA}/" app/sw.js
+        run: sed -i "s/mv-studio-v3.4/mv-studio-${GITHUB_SHA}/" app/sw.js
       - uses: actions/upload-pages-artifact@v3
         with:
           path: app

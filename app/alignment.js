@@ -104,7 +104,44 @@
     return {method: 'whisper_word_character_interpolation', coverage: count / expected.length, lines: rows};
   }
 
-  const api = {align, graphemes};
+  function vocalRanges(duration, intro, intervals) {
+    if (!Number.isFinite(intro) || intro < 0 || intro >= duration) throw Error('歌い出しを曲の長さより前にしてください。');
+    const blocked = [];
+    for (const entry of intervals.split(/[、,\n]+/)) {
+      if (!entry.trim()) continue;
+      const match = entry.trim().match(/^(\d+(?:\.\d+)?)\s*[-〜～–]\s*(\d+(?:\.\d+)?)$/);
+      if (!match || +match[1] >= +match[2] || +match[2] > duration) throw Error('間奏・アウトロは曲の範囲内で 32.5-47.2 のように指定してください。');
+      blocked.push([+match[1], +match[2]]);
+    }
+    blocked.sort((a, b) => a[0] - b[0]);
+    const allowed = [];
+    let start = intro;
+    for (const [from, to] of blocked) {
+      if (from > start) allowed.push({start, end: from});
+      start = Math.max(start, to);
+    }
+    if (start < duration) allowed.push({start, end: duration});
+    return allowed;
+  }
+
+  function transcribe(chunks) {
+    const lines = [];
+    let row;
+    for (const {text, timestamp, breakBefore} of chunks) {
+      const [start, end] = timestamp || [];
+      if (!text?.trim() || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+      if (!row || breakBefore || start - row.end >= .72 || /[。！？!?]$/.test(row.text.trimEnd()) || row.text.length >= 24) {
+        row = {text: '', start, end, words: [], characters: [], coverage: 1};
+        lines.push(row);
+      }
+      row.text += text.replace(/[\r\n]+/g, ' ');
+      row.end = Math.max(row.end, end);
+      row.words.push({text: text.trim(), start, end});
+    }
+    return lines.map(line => ({...line, text: line.text.trim()}));
+  }
+
+  const api = {align, graphemes, vocalRanges, transcribe};
   if (typeof module !== 'undefined') module.exports = api;
   else root.MVAlignment = api;
 })(globalThis);

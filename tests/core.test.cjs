@@ -40,3 +40,16 @@ assert.deepEqual(gapped.characters.map(({start, end}) => [start, end]), [
   [1, 1.5], [1.5, 2], [2, 2], [2, 2.5], [2.5, 3], [3, 3.5],
 ]);
 assert.equal(gapped.coverage, .4);
+
+const {vocalRanges, transcribe} = require('../app/alignment.js');
+assert.deepEqual(vocalRanges(54, 8, '4-6\n20-24、21-30\n48-54'), [
+  {start: 8, end: 20}, {start: 30, end: 48},
+]);
+assert.throws(() => vocalRanges(54, 8, '30-20'));
+assert.deepEqual(transcribe([
+  {text: '夜の', timestamp: [8, 8.3]}, {text: '歌', timestamp: [8.3, 8.6]},
+  {text: '光', timestamp: [8.9, 9.2], breakBefore: true},
+  {text: '次へ', timestamp: [13.7, 14.2]},
+]).map(({text,start,end}) => ({text,start,end})), [
+  {text:'夜の歌',start:8,end:8.6}, {text:'光',start:8.9,end:9.2}, {text:'次へ',start:13.7,end:14.2},
+]);

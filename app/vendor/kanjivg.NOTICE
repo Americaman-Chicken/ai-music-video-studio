@@ -1,0 +1,9 @@
+KanjiVG stroke data
+Copyright (C) Ulrich Apel and KanjiVG contributors.
+Project: https://kanjivg.tagaini.net/
+Upstream: https://github.com/KanjiVG/kanjivg/tree/9d7220dfca09107dca2e0b0e45f90f696185e3c3
+License: Creative Commons Attribution-ShareAlike 3.0 Unported
+https://creativecommons.org/licenses/by-sa/3.0/
+Changes: extracted SVG path data in stroke order from the canonical Unicode
+files and serialized it by character in JavaScript. The adapted path data
+in kanjivg.js is distributed under the same CC BY-SA 3.0 license.

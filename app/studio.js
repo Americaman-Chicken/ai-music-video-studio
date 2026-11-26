@@ -2,7 +2,7 @@
 'use strict';
 const $=id=>document.getElementById(id), audio=$('player'), canvas=$('preview');
 let requestedAudio=null,requestedImages=[],imageFiles=[],soundFile=null, pictures=[],url=null,analysis=null,recording=false, aligned=[],scenePlan=null,mediaGeneration=0,mediaLoads=0,analyzing=false;
-const fields=['title','lyrics','timing','style','bpm','intensity','notes','ratio','resolution','rangeStart','rangeEnd','format','planEngine','typography'];
+const fields=['title','lyrics','timing','style','bpm','intensity','notes','ratio','resolution','rangeStart','rangeEnd','format','planEngine','typography','introEnd','instrumentals'];
 let syncActive=false;
 let projectId=null, projectBusy=false, aiJob=null, candidate=null, renderController=null;
 function status(message) {
@@ -76,12 +76,33 @@ async function applyMedia(file, files) {
 }
 $('audio').onchange=()=>{requestedAudio=$('audio').files[0]||null;loadMedia(requestedAudio,requestedImages).catch(e=>status(e.message))};$('images').onchange=()=>{requestedImages=[...$('images').files];loadMedia(requestedAudio,requestedImages).catch(e=>status(e.message))};
 let cachedCues;
+function readVocalRanges(duration) {
+  const intro = $('introEnd').value === '' ? 0 : $('introEnd').valueAsNumber;
+  return MVAlignment.vocalRanges(duration, intro, $('instrumentals').value);
+}
 function cues(duration) {
   const lyrics = $('lyrics').value, mode = $('timing').value;
-  if (cachedCues?.lyrics === lyrics && cachedCues.mode === mode && cachedCues.duration === duration) return cachedCues.rows;
+  const rangeKey = $('introEnd').value + '/' + $('instrumentals').value;
+  if (cachedCues?.lyrics === lyrics && cachedCues.mode === mode && cachedCues.duration === duration && cachedCues.rangeKey === rangeKey) return cachedCues.rows;
+  let ranges;
+  try { ranges = readVocalRanges(duration); }
+  catch { ranges = [{start: 0, end: duration}]; }
   const lines = lyrics.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-  const rows = mode === 'manual' ? MVCore.parseLrc(lyrics) : lines.map((text, index) => ({text, start: index * duration / lines.length}));
-  cachedCues = {lyrics, mode, duration, rows};
+  let rows = [];
+  if (mode === 'manual') rows = MVCore.parseLrc(lyrics);
+  if (mode === 'even' && ranges.length) {
+    const span = ranges.reduce((sum, range) => sum + range.end - range.start, 0);
+    rows = lines.map((text, index) => {
+      let offset = index * span / lines.length;
+      for (const range of ranges) {
+        const length = range.end - range.start;
+        if (offset < length) return {text, start: range.start + offset};
+        offset -= length;
+      }
+      return {text, start: ranges[ranges.length - 1].end};
+    });
+  }
+  cachedCues = {lyrics, mode, duration, rangeKey, rows, ranges};
   return rows;
 }
 function plan(t){const p=scenePlan||{base:MVCore.settings($('notes').value),scenes:[]};const scene=p.scenes[MVCore.lastIndex(p.scenes,s=>t>=s.start&&t<s.end)];return {...p.base,...scene,base:$('style').value};}
@@ -108,13 +129,20 @@ function paintImage(context, image, w, h, time, step, visual) {
 function paintLyrics(context, w, h, time, duration, visual) {
   const {effects, glitch, minimal} = visual;
   const rows = cues(duration);
-  const index = MVCore.lastIndex(rows, row => row.start <= time);
+  const range = cachedCues.ranges.find(item => time >= item.start && time < item.end);
+  if (!range) return;
+  const index = MVCore.lastIndex(rows, row => row.start >= range.start && row.start <= time);
   const row = rows[index];
   if (!row || effects.noText) return;
   const scale = h / 360;
   const elapsed = time - row.start;
   const characters = MVAlignment.graphemes(row.text);
-  const end = rows[index + 1]?.start ?? duration;
+  let end = Math.min(rows[index + 1]?.start ?? duration, range.end);
+  const recognized = aligned.find(line => line.text === row.text && Math.abs(line.start - row.start) < .02);
+  if (recognized && recognized.end > recognized.start && end - recognized.end >= 1.25) {
+    end = Math.min(end, recognized.end + .3);
+  }
+  if (time >= end) return;
   const mode = effects.typography || $('typography').value;
   if (mode !== 'classic' && typeof MVTypography !== 'undefined') {
     MVTypography.paint(context, w, h, {
@@ -143,7 +171,6 @@ function paintLyrics(context, w, h, time, duration, visual) {
   context.fillStyle = 'white';
   context.fillText(text, w / 2, y);
   if ($('karaoke').checked) {
-    const end = rows[index + 1]?.start ?? duration;
     const progress = MVCore.progress(row, time, end, aligned);
     const complete = Math.floor(progress * characters.length);
     const prefix = context.measureText(characters.slice(0, complete).join('')).width;
@@ -363,6 +390,12 @@ async function listProjects(){
   for(const [id,title] of entries)select.add(new Option(title||'無題のプロジェクト',id));
   select.value=projectId||entries[0]?.[0]||'';
 }
+function resetField(element) {
+  if (element instanceof HTMLSelectElement) {
+    const initial = Array.from(element.options).findIndex(option => option.defaultSelected);
+    element.selectedIndex = Math.max(0, initial);
+  } else element.value = element.defaultValue;
+}
 $('saveProject').onclick=async()=>{
   if(projectBusy)return;projectBusy=true;
   try{
@@ -381,7 +414,10 @@ $('restoreProject').onclick=async()=>{
     requestedAudio=p.soundFile||null;requestedImages=p.imageFiles||[];
     $('audio').value='';$('images').value='';
     await loadMedia(requestedAudio,requestedImages);
-    for(const field of fields)if(p.fields[field]!=null)$(field).value=p.fields[field];
+    for(const field of fields) {
+      if(p.fields[field]!=null)$(field).value=p.fields[field];
+      else resetField($(field));
+    }
     $('karaoke').checked=Boolean(p.karaoke);$('spectrum').checked=Boolean(p.spectrum);
     projectId=id;analysis=p.analysis||null;aligned=p.aligned||[];
     setPlan(p.scenePlan||null);renderSections();$('ratio').onchange();status('復元しました。');
@@ -392,11 +428,7 @@ $('newProject').onclick=async()=>{
   projectId=null;$('projectList').value='';
   requestedAudio=null;requestedImages=[];$('audio').value='';$('images').value='';
   await loadMedia(null,[]);
-  for(const id of fields){
-    const element=$(id);
-    if(element instanceof HTMLSelectElement)element.selectedIndex=id==='resolution'?1:0;
-    else element.value=element.defaultValue;
-  }
+  for(const id of fields)resetField($(id));
   $('karaoke').checked=$('spectrum').checked=false;
   analysis=null;aligned=[];setPlan(null);renderSections();$('ratio').onchange();status('新規プロジェクト');
 };
@@ -451,13 +483,15 @@ $('recognize').onclick=async()=>{
   }
   const file=soundFile, lyrics=$('lyrics').value, lines=lyricInput();
   const notice = !file ? '先に楽曲ファイルを選択してください。'
-    : !lines.length ? '歌詞を入力してください。'
     : !Number.isFinite(audio.duration) ? '楽曲の読み込みが完了してから押してください。' : '';
   if(notice){$('syncStatus').textContent=notice;status(notice);return}
   syncActive=true;
   candidate=null;$('syncReview').textContent='';$('applySync').disabled=true;
   let context;
   try{
+    const ranges=readVocalRanges(audio.duration);
+    if(!ranges.length)throw Error('認識できる範囲がありません。');
+    const rangeKey=$('introEnd').value+'/'+$('instrumentals').value;
     const chunks=await runAI({action:'recognize',model:$('recognitionModel').value},[],async(signal,data)=>{
       status('音源を読み込み中');
       context=new AudioContext({sampleRate:16000});
@@ -470,16 +504,18 @@ $('recognize').onclick=async()=>{
       }
       if(decoded.numberOfChannels>1)for(let i=0;i<samples.length;i++)samples[i]/=decoded.numberOfChannels;
       await context.close();
-      return {data:{...data,samples},transfer:[samples.buffer]};
+      return {data:{...data,samples,ranges},transfer:[samples.buffer]};
     });
-    if(file!==soundFile||lyrics!==$('lyrics').value)throw Error('素材または歌詞が変更されました');
-    const result=MVAlignment.align(lines,chunks,audio.duration);
-    const weak = result.coverage < .55 || result.lines.some(line => line.coverage < .4);
-    candidate = {file,lyrics,lines:result.lines,inputs:[]};
+    if(file!==soundFile||lyrics!==$('lyrics').value||rangeKey!==$('introEnd').value+'/'+$('instrumentals').value)throw Error('素材または認識範囲が変更されました');
+    const extract=lines.length===0;
+    const result=extract?{lines:MVAlignment.transcribe(chunks)}:MVAlignment.align(lines,chunks,audio.duration);
+    if(!result.lines.length)throw Error('照合できる歌唱または歌詞がありません');
+    const weak = !extract && (result.coverage < .55 || result.lines.some(line => line.coverage < .4));
+    candidate = {file,lyrics,ranges,rangeKey,lines:result.lines,inputs:[]};
     const review = $('syncReview');
     for (const [index,line] of result.lines.entries()) {
       const label = document.createElement('label');
-      label.textContent = `${line.text} (${Math.round(line.coverage * 100)}%)`;
+      label.textContent = extract ? line.text : `${line.text} (${Math.round(line.coverage * 100)}%)`;
       const input = document.createElement('input');
       input.type = 'number'; input.min = 0; input.step = .01;
       if (line.coverage >= (weak ? .55 : .4)) input.value = line.start.toFixed(2);
@@ -504,24 +540,25 @@ $('recognize').onclick=async()=>{
       candidate.inputs.push(input);
     }
     validateSync(false);
-    status(weak ? `一致率 ${Math.round(result.coverage*100)}%。空欄を補うか、手動またはタップ同期で調整してください。`
+    status(extract ? `文字起こし候補 ${result.lines.length} 行。試聴してから適用してください。` : weak ? `一致率 ${Math.round(result.coverage*100)}%。空欄を補うか、手動またはタップ同期で調整してください。`
       : `同期候補 一致率 ${Math.round(result.coverage*100)}%。文字時刻は推定です。`);
   }catch(error){status(error.name==='AbortError'?'中止しました':error.message)}
   finally{syncActive=false;if(context&&context.state!=='closed')await context.close().catch(()=>{})}
 };
 function validateSync(apply) {
-  if (!candidate || candidate.file !== soundFile || candidate.lyrics !== $('lyrics').value) {
+  if (!candidate || candidate.file !== soundFile || candidate.lyrics !== $('lyrics').value || candidate.rangeKey !== $('introEnd').value+'/'+$('instrumentals').value) {
     $('applySync').disabled = true;
     return;
   }
   const starts = candidate.inputs.map(input => input.valueAsNumber);
   const valid = starts.every((start,index) => Number.isFinite(start) && start >= 0 &&
-    start < audio.duration && (!index || start > starts[index - 1]));
+    candidate.ranges.some(range => start >= range.start && start < range.end) && (!index || start > starts[index - 1]));
   $('applySync').disabled = !valid;
   if (!valid || !apply) return;
   aligned = candidate.lines.map((line,index) => {
     const start = starts[index];
-    const limit = starts[index + 1] ?? audio.duration;
+    const range = candidate.ranges.find(item => start >= item.start && start < item.end);
+    const limit = Math.min(starts[index + 1] ?? audio.duration, range.end);
     if (line.start === null || line.coverage < .4) return {...line,start,end:start,characters:[],words:[]};
     const delta = start - line.start;
     const shift = segment => ({
@@ -547,6 +584,10 @@ function validateSync(apply) {
   status('同期候補を適用しました');
 }
 $('lyrics').addEventListener('input', () => validateSync(false));
+for(const id of ['introEnd','instrumentals']){
+  $(id).addEventListener('input',()=>validateSync(false));
+  $(id).addEventListener('change',timeline);
+}
 $('applySync').onclick = () => validateSync(true);
 
 function exportRange(duration){
@@ -610,6 +651,7 @@ $('renderLocal').onclick=async()=>{
     context=new AudioContext({sampleRate:48000});
     const buffer=await context.decodeAudioData(await soundFile.arrayBuffer());
     if(signal.aborted)throw signal.reason||new DOMException('中止しました','AbortError');
+    readVocalRanges(Number.isFinite(audio.duration) ? audio.duration : buffer.duration);
     const [from,to]=exportRange(buffer.duration), length=to-from;
     const exporter=await import('./video-export.mjs');
     const options=await exporter.encodingOptions(mp4,w,h,buffer.numberOfChannels);

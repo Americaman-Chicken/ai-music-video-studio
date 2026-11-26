@@ -76,12 +76,16 @@
       context.rotate(rotation + direction * fly * .8);
       context.scale((.6 + .4 * reveal + bounce) * stretch, (.68 + .32 * reveal + bounce) * (accent ? 1.18 : 1));
       context.globalAlpha = reveal * opacity;
-      context.font = `${accent ? 900 : 800} ${font}px ${i % 5 === 3 ? 'serif' : 'sans-serif'}`;
-      context.strokeStyle = color[3];
-      context.lineWidth = Math.max(1, font * .085);
-      context.strokeText(glyph, 0, 0);
-      context.fillStyle = progress !== null && i < progress * characters.length ? color[1] : color[accent ? 2 : 0];
-      context.fillText(glyph, 0, 0);
+      const fill = progress !== null && i < progress * characters.length ? color[1] : color[accent ? 2 : 0];
+      const brushReveal = frame.animation === 'type' ? reveal : Math.min(1, reveal * 1.35);
+      if (!MVInk.paint(context, glyph, font * 1.17, brushReveal, fill, color[3])) {
+        context.font = `800 ${font}px sans-serif`;
+        context.strokeStyle = color[3];
+        context.lineWidth = Math.max(1, font * .085);
+        context.strokeText(glyph, 0, 0);
+        context.fillStyle = fill;
+        context.fillText(glyph, 0, 0);
+      }
       context.restore();
     }
     context.restore();

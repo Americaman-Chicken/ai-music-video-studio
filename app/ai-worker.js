@@ -20,21 +20,33 @@ self.onmessage = async ({data}) => {
       });
       const chunks = [];
       const windowSize = 25 * 16000;
-      for (let offset = 0; offset < data.samples.length; offset += windowSize) {
-        progress(`歌唱認識中 ${Math.floor(offset / data.samples.length * 100)}%`);
-        const from = Math.max(0, offset - 16000);
-        const to = Math.min(data.samples.length, offset + windowSize + 16000);
-        const result = await recognize(data.samples.subarray(from, to), {
-          language: 'japanese', task: 'transcribe', return_timestamps: 'word',
-        });
-        for (const item of result.chunks || []) {
-          const [start, end] = item.timestamp;
-          if (start == null || end == null) continue;
-          const timestamp = [start + from / 16000, end + from / 16000];
-          const midpoint = (timestamp[0] + timestamp[1]) * 8000;
-          if (midpoint >= offset && midpoint < Math.min(data.samples.length, offset + windowSize)) {
-            chunks.push({text: item.text, timestamp});
+      const sampleRate = 16000;
+      const ranges = (data.ranges || [{start: 0, end: data.samples.length / sampleRate}]).map(({start, end}) => ({
+        from: Math.round(start * sampleRate), to: Math.min(data.samples.length, Math.round(end * sampleRate)),
+      }));
+      const total = ranges.reduce((sum, range) => sum + range.to - range.from, 0);
+      let processed = 0;
+      for (const range of ranges) {
+        let breakBefore = true;
+        for (let offset = range.from; offset < range.to; offset += windowSize) {
+          progress(`歌唱認識中 ${Math.floor(processed / total * 100)}%`);
+          const from = Math.max(range.from, offset - sampleRate);
+          const to = Math.min(range.to, offset + windowSize + sampleRate);
+          const result = await recognize(data.samples.subarray(from, to), {
+            language: 'japanese', task: 'transcribe', return_timestamps: 'word',
+          });
+          for (const {text, timestamp} of result.chunks || []) {
+            const [start, end] = timestamp || [];
+            if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
+            const absoluteStart = Math.max(range.from / sampleRate, start + from / sampleRate);
+            const absoluteEnd = Math.min(range.to / sampleRate, end + from / sampleRate);
+            const midpoint = (absoluteStart + absoluteEnd) * sampleRate / 2;
+            if (absoluteEnd > absoluteStart && midpoint >= offset && midpoint < Math.min(range.to, offset + windowSize)) {
+              chunks.push({text, timestamp: [absoluteStart, absoluteEnd], breakBefore});
+              breakBefore = false;
+            }
           }
+          processed += Math.min(windowSize, range.to - offset);
         }
       }
       self.postMessage({result: chunks});

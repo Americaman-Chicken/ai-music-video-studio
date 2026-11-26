@@ -21,7 +21,7 @@ class QuietHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == '/app/sw.js' and self.release > 1:
-            data = (ROOT / 'app/sw.js').read_text().replace('mv-studio-v3.3', 'mv-studio-test-update')
+            data = (ROOT / 'app/sw.js').read_text().replace('mv-studio-v3.4', 'mv-studio-test-update')
             self.send_response(200)
             self.send_header('Content-Type', 'text/javascript')
             self.send_header('Cache-Control', 'no-cache')
@@ -72,6 +72,17 @@ def test_ai_integration(browser, base_url, directory):
         content_type='text/javascript', body="""
         self.onmessage = ({data}) => {
           if (data.action === 'recognize') {
+            if (data.ranges[0]?.start === .4) {
+              if (JSON.stringify(data.ranges) !== JSON.stringify([{start:.4,end:.8},{start:1.3,end:2}])) {
+                self.postMessage({error:'incorrect vocal ranges'});
+              } else {
+                self.postMessage({result:[
+                  {text:'夜の歌',timestamp:[.5,.7]},
+                  {text:'光',timestamp:[1.4,1.6],breakBefore:true}
+                ]});
+              }
+              return;
+            }
             const first = data.samples.length === 32000 ? '夏の歌' : '別の曲';
             self.postMessage({result: [{text:first,timestamp:[.2,.6]},{text:'君へ',timestamp:[1,1.5]}]});
           } else if (data.context.notes === '待機') {
@@ -112,6 +123,35 @@ def test_ai_integration(browser, base_url, directory):
     page.locator('#player').evaluate('audio => audio.pause()')
     page.locator('#applySync').click()
     expect(page.locator('#lyrics')).to_have_value('[00:00.50] 猫と犬')
+    page.locator('#introEnd').fill('0.4')
+    page.locator('#instrumentals').fill('0.8-1.3')
+    page.locator('#timing').select_option('auto')
+    page.locator('#lyrics').fill('')
+    page.locator('#recognize').click()
+    expect(page.locator('#syncStatus')).to_contain_text('文字起こし候補 2 行')
+    expect(page.locator('#lyrics')).to_have_value('')
+    page.locator('#applySync').click()
+    expect(page.locator('#lyrics')).to_have_value('[00:00.50] 夜の歌\n[00:01.40] 光')
+    page.evaluate("""() => {
+        window.brushPaints = 0;
+        const paint = MVInk.paint;
+        MVInk.paint = (...args) => {if (paint(...args)) window.brushPaints++;};
+    }""")
+    def brush_count_at(time):
+        return page.evaluate("""async time => {
+            window.brushPaints = 0;
+            const audio = document.querySelector('#player');
+            await new Promise(resolve => {
+                audio.addEventListener('seeked', resolve, {once:true});
+                audio.currentTime = time;
+            });
+            return window.brushPaints;
+        }""", time)
+    assert brush_count_at(.2) == 0
+    assert brush_count_at(.68) > 0
+    assert brush_count_at(.95) == 0
+    assert brush_count_at(1.35) == 0
+    assert brush_count_at(1.7) > 0
     page.locator('#planEngine').select_option('llm')
     page.locator('#notes').fill('待機')
     page.locator('#makePlan').click()
@@ -291,7 +331,7 @@ def test_browser(base_url, directory):
         page.close()
         page = context.new_page()
         page.goto(base_url + '/app/')
-        page.wait_for_function("caches.keys().then(keys => keys.includes('mv-studio-test-update') && !keys.includes('mv-studio-v3.3'))")
+        page.wait_for_function("caches.keys().then(keys => keys.includes('mv-studio-test-update') && !keys.includes('mv-studio-v3.4'))")
         assert not errors, errors
         assert not external, external
         context.close()
