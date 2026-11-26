@@ -2,7 +2,7 @@
 'use strict';
 const $=id=>document.getElementById(id), audio=$('player'), canvas=$('preview');
 let requestedAudio=null,requestedImages=[],imageFiles=[],soundFile=null, pictures=[],url=null,analysis=null,recording=false, aligned=[],scenePlan=null,mediaGeneration=0,mediaLoads=0,analyzing=false;
-const fields=['title','lyrics','timing','style','bpm','intensity','notes','ratio','resolution','rangeStart','rangeEnd','format','planEngine','typography','introEnd','instrumentals'];
+const fields=['title','lyrics','timing','style','bpm','intensity','notes','ratio','resolution','rangeStart','rangeEnd','format','planEngine','typography','introEnd','instrumentals','layerEffects','foregroundMode'];
 let syncActive=false, subtitleDraft=null;
 let projectId=null, projectBusy=false, aiJob=null, candidate=null, renderController=null;
 function status(message) {
@@ -130,23 +130,28 @@ function paintImage(context, image, w, h, time, step, visual) {
   context.restore();
 }
 
-function paintLyrics(context, w, h, time, duration, visual) {
-  const {effects, glitch, minimal} = visual;
+function activeLyric(time, duration) {
   const rows = cues(duration);
   const range = cachedCues.ranges.find(item => time >= item.start && time < item.end);
-  if (!range) return;
+  if (!range) return null;
   const index = MVCore.lastIndex(rows, row => row.start >= range.start && row.start <= time);
   const row = rows[index];
-  if (!row || effects.noText) return;
-  const scale = h / 360;
-  const elapsed = time - row.start;
-  const characters = MVAlignment.graphemes(row.text);
+  if (!row) return null;
   let end = Math.min(rows[index + 1]?.start ?? duration, range.end);
   const recognized = aligned.find(line => line.text === row.text && Math.abs(line.start - row.start) < .02);
   if (recognized && recognized.end > recognized.start && end - recognized.end >= 1.25) {
     end = Math.min(end, recognized.end + .3);
   }
-  if (time >= end) return;
+  return time < end ? {row, index, end} : null;
+}
+
+function paintLyrics(context, w, h, time, visual, lyric) {
+  const {effects, glitch, minimal} = visual;
+  if (!lyric || effects.noText) return;
+  const {row, index, end} = lyric;
+  const scale = h / 360;
+  const elapsed = time - row.start;
+  const characters = MVAlignment.graphemes(row.text);
   const mode = effects.typography || $('typography').value;
   if (mode !== 'classic' && typeof MVTypography !== 'undefined') {
     MVTypography.paint(context, w, h, {
@@ -189,22 +194,12 @@ function paintLyrics(context, w, h, time, duration, visual) {
   context.restore();
 }
 
-function draw(time, duration) {
-  const context = canvas.getContext('2d'), w = canvas.width, h = canvas.height;
-  const effects = plan(time);
-  const bpm = Math.max(30, Math.min(300, +$('bpm').value || 120));
-  const pulse = MVCore.beatPulse(time, bpm, analysis);
-  const energy = analysis?.energy[Math.min(analysis.energy.length - 1, Math.floor(time * 2))] || 0;
-  const chorus = analysis?.sections.find(section => time >= section.start && time < section.end)?.kind?.startsWith('サビ');
-  const strength = +$('intensity').value / 100 * (chorus ? 1.4 : 1) * (effects.quiet ? .35 : 1);
-  const glitch = effects.base === 'glitch', dark = effects.base === 'dark', minimal = effects.base === 'minimal';
-  const visual = {effects, pulse, strength, glitch, dark, minimal};
-  const step = 480 / bpm, scale = h / 360;
-  const index = effects.explicitImage ? Math.min(pictures.length - 1, effects.image)
-    : MVCore.imageIndex(time, analysis, step, pictures.length);
+function paintBackground(context, image, w, h, time, step, visual) {
+  const {effects,pulse,strength,glitch} = visual;
+  const scale=h/360;
   context.fillStyle = '#11101b';
   context.fillRect(0, 0, w, h);
-  paintImage(context, pictures[index], w, h, time, step, visual);
+  paintImage(context, image, w, h, time, step, visual);
   const shade = context.createLinearGradient(0, 0, 0, h);
   shade.addColorStop(0, '#0005');
   shade.addColorStop(.45, '#0000');
@@ -226,7 +221,39 @@ function draw(time, duration) {
     context.fillStyle = '#ffffff1a';
     context.fillRect(0, 0, w, h);
   }
-  paintLyrics(context, w, h, time, duration, visual);
+}
+function draw(time, duration) {
+  const context = canvas.getContext('2d'), w = canvas.width, h = canvas.height;
+  const effects = plan(time);
+  const bpm = Math.max(30, Math.min(300, +$('bpm').value || 120));
+  const pulse = MVCore.beatPulse(time, bpm, analysis);
+  const energy = analysis?.energy[Math.min(analysis.energy.length - 1, Math.floor(time * 2))] || 0;
+  const chorus = analysis?.sections.find(section => time >= section.start && time < section.end)?.kind?.startsWith('サビ');
+  const strength = +$('intensity').value / 100 * (chorus ? 1.4 : 1) * (effects.quiet ? .35 : 1);
+  const glitch = effects.base === 'glitch', dark = effects.base === 'dark', minimal = effects.base === 'minimal';
+  const visual = {effects, pulse, strength, glitch, dark, minimal};
+  const step = 480 / bpm, scale = h / 360;
+  const separateForeground = $('foregroundMode').value !== 'none' && pictures.length > 1;
+  const count = pictures.length - Number(separateForeground);
+  const index = effects.explicitImage ? Math.min(count - 1, effects.image)
+    : MVCore.imageIndex(time, analysis, step, count);
+  const image = pictures[index];
+  const foreground = separateForeground ? pictures[pictures.length - 1] : null;
+  const mode = effects.layerEffect || $('layerEffects').value;
+  const layer = recording ? 'all' : $('previewLayer').value;
+  const lyric = activeLyric(time, duration);
+  if (mode !== 'none' || foreground || layer !== 'all') {
+    const bar = MVLayers.barAt(time, bpm, analysis?.beats?.[0]);
+    const letters = effects.noText ? [] : MVAlignment.graphemes(lyric?.row.text || '').filter(character => /[\p{L}\p{N}]/u.test(character));
+    const glyph = letters[bar.index % letters.length];
+    MVLayers.paint(context, {w,h,time,bar,strength,glyph,layer,mode,foreground,keyGreen:$('foregroundMode').value==='green'},
+      target=>paintBackground(target,image,w,h,time,step,visual),
+      target=>paintLyrics(target,w,h,time,visual,lyric));
+  } else {
+    paintBackground(context,image,w,h,time,step,visual);
+    paintLyrics(context,w,h,time,visual,lyric);
+  }
+  if (layer !== 'all') return;
   if (!minimal) {
     context.fillStyle = '#ffffffcc';
     context.textAlign = 'left';
@@ -267,7 +294,7 @@ function parsePlan(input, duration) {
     for(const key of ['mono','shake','quiet','flash','vignette','center','noText','explicitImage']){
       if(key in source){if(typeof source[key]!=='boolean')throw Error('演出設定が不正です');result[key]=source[key]}
     }
-    for(const [key,options] of Object.entries({camera:['in','out','pan','drift','default'],animation:['type','fade','bounce','default'],typography:['auto','poster','vertical','arc','split','classic']})){
+    for(const [key,options] of Object.entries({camera:['in','out','pan','drift','default'],animation:['type','fade','bounce','default'],typography:['auto','poster','vertical','arc','split','classic'],layerEffect:['none','auto','mask','tiles','wave','glitch']})){
       if(source[key]!==undefined){if(!options.includes(source[key]))throw Error('演出設定が不正です');result[key]=source[key]}
     }
     if(result.explicitImage){
@@ -339,6 +366,7 @@ function editScene(index) {
   $('sceneCamera').value=scene.camera||'default';
   $('sceneAnimation').value=scene.animation||'default';
   $('sceneTypography').value=scene.typography||'';
+  $('sceneLayerEffects').value=scene.layerEffect||'';
   $('sceneVignette').checked=Boolean(scene.vignette);
 }
 $('saveScene').onclick=()=>{
@@ -346,7 +374,7 @@ $('saveScene').onclick=()=>{
     const index=+$('sceneIndex').value, image=$('sceneImage').value;
     const scenes=scenePlan.scenes.slice();
     scenes[index]={...scenes[index],start:$('sceneStart').valueAsNumber,end:$('sceneEnd').valueAsNumber,
-      explicitImage:image!=='',image:+image,camera:$('sceneCamera').value,animation:$('sceneAnimation').value,typography:$('sceneTypography').value||undefined,vignette:$('sceneVignette').checked};
+      explicitImage:image!=='',image:+image,camera:$('sceneCamera').value,animation:$('sceneAnimation').value,typography:$('sceneTypography').value||undefined,layerEffect:$('sceneLayerEffects').value||undefined,vignette:$('sceneVignette').checked};
     setPlan(parsePlan({...scenePlan,scenes},audio.duration));
     editScene(index);status('区間演出を更新しました');
   }catch(error){status(error.message)}
@@ -736,7 +764,7 @@ function exportRange(duration){
   if(!Number.isFinite(from)||!Number.isFinite(to)||from<0||to>duration+.01||from>=Math.min(duration,to))throw Error('出力区間が不正です');
   return [from,Math.min(to,duration)];
 }
-function recordFrames(context,length,from,duration,signal){
+function recordFrames(context,length,from,drawFrame,signal){
   const started=context.currentTime;
   return new Promise((resolve,reject)=>{
     let frame, previous=-1;
@@ -750,7 +778,7 @@ function recordFrames(context,length,from,duration,signal){
         const elapsed=context.currentTime-started;
         const index=Math.floor(Math.min(elapsed,length)*30);
         if(index!==previous){
-          draw(from+Math.min(elapsed,length),duration);
+          drawFrame(from+Math.min(elapsed,length));
           previous=index;
           const message=`書き出し ${Math.min(100,Math.floor(elapsed/length*100))}%`;
           if($('localStatus').textContent!==message)status(message);
@@ -793,19 +821,30 @@ $('renderLocal').onclick=async()=>{
     if(signal.aborted)throw signal.reason||new DOMException('中止しました','AbortError');
     readVocalRanges(Number.isFinite(audio.duration) ? audio.duration : buffer.duration);
     const [from,to]=exportRange(buffer.duration), length=to-from;
+    $('brightnessStatus').textContent='';
+    let brightness=MVLayers.inspectBrightness();
+    const drawFrame=time=>{
+      draw(time,buffer.duration);
+      brightness.frame(canvas,time);
+    };
+    const reportBrightness=()=>{
+      $('brightnessStatus').textContent=`連続フレームの明暗チェック（簡易） 最大 ${brightness.peak()} 回／秒の明暗反転`;
+    };
     const exporter=await import('./video-export.mjs');
     const options=await exporter.encodingOptions(mp4,w,h,buffer.numberOfChannels);
     if(signal.aborted)throw signal.reason||new DOMException('中止しました','AbortError');
     if(options){
       try {
         const file=await exporter.encode(canvas,buffer,from,to,options,
-          time=>draw(time,buffer.duration),
+          drawFrame,
           progress=>status(`書き出し ${Math.floor(progress*100)}%`),signal);
         download(file,`MV.${mp4?'mp4':'webm'}`);
+        reportBrightness();
         status('書き出し完了');
         return;
       }catch(error){
         if(signal.aborted||!mime)throw error;
+        brightness=MVLayers.inspectBrightness();
         status('リアルタイム録画で再試行します');
       }
     }
@@ -817,7 +856,7 @@ $('renderLocal').onclick=async()=>{
     if(signal.aborted)throw signal.reason||new DOMException('中止しました','AbortError');
     destination=context.createMediaStreamDestination();
     source=context.createBufferSource();source.buffer=buffer;source.connect(destination);
-    draw(from,buffer.duration);
+    drawFrame(from);
     stream=canvas.captureStream(30);
     for(const track of destination.stream.getAudioTracks())stream.addTrack(track);
     recorder=new MediaRecorder(stream,{mimeType:mime,videoBitsPerSecond:Math.min(w,h)>720?8000000:4000000});
@@ -828,13 +867,14 @@ $('renderLocal').onclick=async()=>{
     recorder.onerror=event=>{recorderError=event.error||Error('録画失敗');controller.abort()};
     recorder.start(1000);
     source.start(0,from,length);
-    try{await recordFrames(context,length,from,buffer.duration,signal)}
+    try{await recordFrames(context,length,from,drawFrame,signal)}
     catch(error){throw recorderError||error}
     if(recorder.state!=='inactive')recorder.stop();
     await stopped;
     if(signal.aborted)throw signal.reason||new DOMException('中止しました','AbortError');
     if(!chunks.length)throw Error('動画データを取得できませんでした');
     download(new Blob(chunks,{type:recorder.mimeType}),`MV.${mp4?'mp4':'webm'}`);
+    reportBrightness();
     status('書き出し完了');
   }catch(error){
     status(signal.reason==='hidden'?'画面が非表示になったため中止しました':error.name==='AbortError'?'中止しました':'出力失敗: '+error.message+(mp4?'。WebMもお試しください。':''));

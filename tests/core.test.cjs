@@ -72,3 +72,11 @@ const reused = require('../app/alignment.js').subtitlesInRanges(recognition, [{s
 assert.equal(reused.length, 1);
 assert.equal(reused[0].text, 'の歌');
 assert.equal(reused[0].start, 8.3);
+
+const layers = require('../app/layers.js');
+assert.deepEqual(layers.barAt(3.5, 120, .5), {index: 1, position:.5});
+assert.equal(layers.modeAt('auto', {index:2}), 'mask');
+assert.equal(layers.modeAt('wave', {index:2}), 'wave');
+assert.equal(layers.bandOffset(3, 2, 40), layers.bandOffset(3, 2, 40));
+assert.notEqual(layers.bandOffset(3, 2, 40), layers.bandOffset(3, 3, 40));
+assert.equal(c.scenes('8-12秒: 巨大文字で切り抜く', [], 20).scenes[0].layerEffect, 'mask');

@@ -21,7 +21,7 @@ class QuietHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == '/app/sw.js' and self.release > 1:
-            data = (ROOT / 'app/sw.js').read_text().replace('mv-studio-v3.5.2', 'mv-studio-test-update')
+            data = (ROOT / 'app/sw.js').read_text().replace('mv-studio-v3.6', 'mv-studio-test-update')
             self.send_response(200)
             self.send_header('Content-Type', 'text/javascript')
             self.send_header('Cache-Control', 'no-cache')
@@ -214,6 +214,53 @@ def test_ai_integration(browser, base_url, directory):
     context.close()
 
 
+def test_video_layers(browser, base_url, directory):
+    context = browser.new_context(service_workers='block', viewport={'width': 393, 'height': 852}, has_touch=True)
+    page = context.new_page()
+    errors = []
+    page.on('pageerror', lambda error: errors.append(str(error)))
+    foreground = Image.new('RGB', (320, 180), '#00ff00')
+    foreground.paste('#f4408a', (120, 60, 200, 120))
+    foreground.save(directory / 'foreground.png')
+    page.goto(base_url + '/app/')
+    page.locator('#audio').set_input_files(directory / 'audio.wav')
+    page.locator('#images').set_input_files([directory / 'image.png', directory / 'foreground.png'])
+    page.wait_for_function('document.querySelector("#player").duration === 2')
+    expect(page.locator('#mediaInfo')).to_contain_text('2枚')
+    page.locator('#lyrics').fill('[00:00.00] 光')
+    page.locator('#timing').select_option('manual')
+    page.locator('#foregroundMode').select_option('green')
+    page.locator('#previewLayer').select_option('art')
+    canvas = page.locator('#preview')
+    color = canvas.evaluate("""canvas => {
+        const ctx = canvas.getContext('2d');
+        return [.12, .5].map(x => [...ctx.getImageData(Math.floor(canvas.width*x), canvas.height/2, 1, 1).data]);
+    }""")
+    assert color[0][2] > color[0][1] + 30 and color[1][0] > color[1][1] + 80, color
+    art = canvas.evaluate('canvas => canvas.toDataURL()')
+    page.locator('#previewLayer').select_option('lyrics')
+    assert canvas.evaluate('canvas => canvas.toDataURL()') != art
+    page.locator('#foregroundMode').select_option('none')
+    page.locator('#previewLayer').select_option('all')
+    page.locator('#layerEffects').select_option('mask')
+    page.locator('#player').evaluate('audio => {audio.currentTime = .8;}')
+    page.wait_for_function('!document.querySelector("#player").seeking')
+    masked = canvas.evaluate('canvas => canvas.toDataURL()')
+    page.locator('#layerEffects').select_option('tiles')
+    assert canvas.evaluate('canvas => canvas.toDataURL()') != masked
+    page.locator('#layerEffects').select_option('mask')
+    assert canvas.evaluate('canvas => canvas.toDataURL()') == masked
+    page.locator('#resolution').select_option('480')
+    page.locator('#previewLayer').select_option('lyrics')
+    path = export(page, directory, 'webm', 'landscape', 2.0)
+    expect(page.locator('#brightnessStatus')).to_contain_text('連続フレームの明暗チェック')
+    pixel = subprocess.check_output(['ffmpeg', '-v', 'error', '-ss', '0.8',
+        '-i', str(path), '-frames:v', '1', '-vf', 'format=rgb24,crop=1:1:100:100', '-f', 'rawvideo', '-'])
+    assert pixel[2] > pixel[0] + 12, list(pixel)
+    assert not errors, errors
+    context.close()
+
+
 def test_long_export(browser, base_url, directory):
     path = directory / 'three-minute.wav'
     subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i',
@@ -377,11 +424,12 @@ def test_browser(base_url, directory):
         page.close()
         page = context.new_page()
         page.goto(base_url + '/app/')
-        page.wait_for_function("caches.keys().then(keys => keys.includes('mv-studio-test-update') && !keys.includes('mv-studio-v3.5.2'))")
+        page.wait_for_function("caches.keys().then(keys => keys.includes('mv-studio-test-update') && !keys.includes('mv-studio-v3.6'))")
         assert not errors, errors
         assert not external, external
         context.close()
         test_ai_integration(browser, base_url, directory)
+        test_video_layers(browser, base_url, directory)
         if os.environ.get('MV_LONG_TEST') == '1':
             test_long_export(browser, base_url, directory)
         browser.close()

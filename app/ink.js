@@ -44,7 +44,7 @@
     return strokes;
   }
 
-  function paint(context, character, size, reveal, color, shadow) {
+  function paint(context, character, size, reveal, color, shadow, heavy = false) {
     const strokes = strokesFor(character);
     if (!strokes) return false;
     const count = reveal * strokes.length;
@@ -55,11 +55,17 @@
     context.shadowOffsetX = Math.max(1, size * .025);
     context.shadowOffsetY = Math.max(1, size * .03);
     context.fillStyle = color;
+    context.strokeStyle = color;
+    context.lineJoin = 'round';
+    context.lineWidth = 4.5;
     for (let i = 0; i < Math.ceil(count); i++) {
       const stroke = strokes[i];
       const partial = count - i;
       const visible = Math.floor(stroke.samples.length * partial);
-      if (partial >= 1) context.fill(stroke.total);
+      if (partial >= 1) {
+        context.fill(stroke.total);
+        if (heavy) context.stroke(stroke.total);
+      }
       else if (visible >= 2) context.fill(brushOutline(stroke.samples, visible, i));
     }
     context.restore();

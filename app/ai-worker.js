@@ -61,7 +61,7 @@ self.onmessage = async ({data}) => {
       progress('演出プランを生成中');
       const completion = await engine.chat.completions.create({
         messages: [
-          {role: 'system', content: 'You design music videos from Japanese instructions. Output one JSON object with base (effect defaults) and scenes (array). Each scene has numeric start/end in seconds, optionally image (zero based, also set explicitImage true), camera (in/out/pan/drift/default), animation (type/fade/bounce/default), typography (auto/poster/vertical/arc/split/classic), and optional booleans mono/shake/quiet/flash/vignette/center/noText. Respect the requested time bounds and image count.'},
+          {role: 'system', content: 'You design music videos from Japanese instructions. Output one JSON object with base (effect defaults) and scenes (array). Each scene has numeric start/end in seconds, optionally image (zero based, also set explicitImage true), camera (in/out/pan/drift/default), animation (type/fade/bounce/default), typography (auto/poster/vertical/arc/split/classic), layerEffect (none/auto/mask/tiles/wave/glitch), and optional booleans mono/shake/quiet/flash/vignette/center/noText. Respect the requested time bounds and image count.'},
           {role: 'user', content: JSON.stringify(data.context)},
         ],
         response_format: {type: 'json_object'},
