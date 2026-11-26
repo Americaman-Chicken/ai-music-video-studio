@@ -2,9 +2,13 @@
 'use strict';
 const $=id=>document.getElementById(id), audio=$('player'), canvas=$('preview');
 let requestedAudio=null,requestedImages=[],imageFiles=[],soundFile=null, pictures=[],url=null,analysis=null,recording=false, aligned=[],scenePlan=null,mediaGeneration=0,mediaLoads=0,analyzing=false;
-const fields=['title','lyrics','timing','style','bpm','intensity','notes','ratio','resolution','rangeStart','rangeEnd','format','planEngine'];
+const fields=['title','lyrics','timing','style','bpm','intensity','notes','ratio','resolution','rangeStart','rangeEnd','format','planEngine','typography'];
+let syncActive=false;
 let projectId=null, projectBusy=false, aiJob=null, candidate=null, renderController=null;
-const status=t=>$('localStatus').textContent=t;
+function status(message) {
+  $('localStatus').textContent=message;
+  if(syncActive) $('syncStatus').textContent=message;
+}
 function download(blob,name){const u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(u),60000)}
 async function loadMedia(a,files){
 mediaLoads++;
@@ -80,7 +84,7 @@ function cues(duration) {
   cachedCues = {lyrics, mode, duration, rows};
   return rows;
 }
-function plan(t){const p=scenePlan||{base:MVCore.settings($('notes').value),scenes:[]};const scene=p.scenes.findLast(s=>t>=s.start&&t<s.end);return {...p.base,...scene,base:$('style').value};}
+function plan(t){const p=scenePlan||{base:MVCore.settings($('notes').value),scenes:[]};const scene=p.scenes[MVCore.lastIndex(p.scenes,s=>t>=s.start&&t<s.end)];return {...p.base,...scene,base:$('style').value};}
 function size(){const portrait=$('ratio').value==='portrait',h=+$('resolution').value;return portrait?[h,Math.round(h*16/9/2)*2]:[Math.round(h*16/9/2)*2,h]}
 function paintImage(context, image, w, h, time, step, visual) {
   if (!image) return;
@@ -104,12 +108,22 @@ function paintImage(context, image, w, h, time, step, visual) {
 function paintLyrics(context, w, h, time, duration, visual) {
   const {effects, glitch, minimal} = visual;
   const rows = cues(duration);
-  const index = rows.findLastIndex(row => row.start <= time);
+  const index = MVCore.lastIndex(rows, row => row.start <= time);
   const row = rows[index];
   if (!row || effects.noText) return;
   const scale = h / 360;
   const elapsed = time - row.start;
   const characters = MVAlignment.graphemes(row.text);
+  const end = rows[index + 1]?.start ?? duration;
+  const mode = effects.typography || $('typography').value;
+  if (mode !== 'classic' && typeof MVTypography !== 'undefined') {
+    MVTypography.paint(context, w, h, {
+      mode, animation: effects.animation, characters, index, elapsed, length: Math.max(.01, end - row.start),
+      pulse: visual.pulse, strength: visual.strength, style: effects.base,
+      progress: $('karaoke').checked ? MVCore.progress(row, time, end, aligned) : null,
+    });
+    return;
+  }
   const text = effects.animation === 'type' ? characters.slice(0, Math.floor(elapsed * 12) + 1).join('') : row.text;
   const jump = effects.animation === 'bounce' ? Math.sin(elapsed * 10) * Math.exp(-elapsed * 4) * 12 * scale : 0;
   const y = jump + h * (effects.center || glitch || minimal ? .5 : .76);
@@ -208,7 +222,7 @@ document.addEventListener('click', () => requestAnimationFrame(repaint));
 audio.addEventListener('seeked', repaint);
 audio.addEventListener('loadedmetadata', () => {timeline();repaint()});
 audio.addEventListener('timeupdate', () => {$('seekTimeline').value=audio.currentTime});
-$('seekTimeline').oninput=()=>seekTo(+$('seekTimeline').value);$('resolution').onchange=$('ratio').onchange;$('ratio').onchange();tick();
+$('seekTimeline').oninput=()=>seekTo(+$('seekTimeline').value);$('resolution').onchange=$('ratio').onchange;
 function renderSections(){const div=$('sectionEditor');div.replaceChildren();$('sections').textContent=analysis?`推定 ${analysis.bpm} BPM / 拍 ${analysis.beats.length} / 信頼度指標 ${analysis.confidence.toFixed(2)}`:'';for(const sec of analysis?.sections||[]){const label=document.createElement('label');label.textContent=`${sec.start.toFixed(1)}–${sec.end.toFixed(1)} 秒`;const select=document.createElement('select');for(const kind of ['未判定','通常区間','静かな区間','サビ候補','イントロ','Aメロ','Bメロ','サビ','間奏','アウトロ'])select.add(new Option(kind,kind));select.value=sec.kind;select.onchange=()=>{sec.kind=select.value;sec.edited=true;timeline();repaint()};label.append(select);div.append(label)}}
 async function analyzeAudio(){if(recording||analyzing)return;if(!soundFile||mediaLoads)return status('音源の読み込みを確認してください');let ac;analyzing=true;try{status('音響解析中');$('analyze').disabled=$('detect').disabled=true;ac=new AudioContext();const file=soundFile,b=await ac.decodeAudioData(await file.arrayBuffer());await new Promise(r=>setTimeout(r,30));const samples=b.getChannelData(0).slice();
 if(b.numberOfChannels>1){const right=b.getChannelData(1);for(let i=0;i<samples.length;i++)samples[i]=(samples[i]+right[i])/2}
@@ -222,8 +236,8 @@ function parsePlan(input, duration) {
     for(const key of ['mono','shake','quiet','flash','vignette','center','noText','explicitImage']){
       if(key in source){if(typeof source[key]!=='boolean')throw Error('演出設定が不正です');result[key]=source[key]}
     }
-    for(const [key,options] of Object.entries({camera:['in','out','pan','drift','default'],animation:['type','fade','bounce','default']})){
-      if(key in source){if(!options.includes(source[key]))throw Error('演出設定が不正です');result[key]=source[key]}
+    for(const [key,options] of Object.entries({camera:['in','out','pan','drift','default'],animation:['type','fade','bounce','default'],typography:['auto','poster','vertical','arc','split','classic']})){
+      if(source[key]!==undefined){if(!options.includes(source[key]))throw Error('演出設定が不正です');result[key]=source[key]}
     }
     if(result.explicitImage){
       if(!Number.isInteger(source.image)||source.image<0||source.image>=pictures.length)throw Error('画像番号が範囲外です');
@@ -293,6 +307,7 @@ function editScene(index) {
   images.value=scene.explicitImage?scene.image:'';
   $('sceneCamera').value=scene.camera||'default';
   $('sceneAnimation').value=scene.animation||'default';
+  $('sceneTypography').value=scene.typography||'';
   $('sceneVignette').checked=Boolean(scene.vignette);
 }
 $('saveScene').onclick=()=>{
@@ -300,7 +315,7 @@ $('saveScene').onclick=()=>{
     const index=+$('sceneIndex').value, image=$('sceneImage').value;
     const scenes=scenePlan.scenes.slice();
     scenes[index]={...scenes[index],start:$('sceneStart').valueAsNumber,end:$('sceneEnd').valueAsNumber,
-      explicitImage:image!=='',image:+image,camera:$('sceneCamera').value,animation:$('sceneAnimation').value,vignette:$('sceneVignette').checked};
+      explicitImage:image!=='',image:+image,camera:$('sceneCamera').value,animation:$('sceneAnimation').value,typography:$('sceneTypography').value||undefined,vignette:$('sceneVignette').checked};
     setPlan(parsePlan({...scenePlan,scenes},audio.duration));
     editScene(index);status('区間演出を更新しました');
   }catch(error){status(error.message)}
@@ -421,7 +436,7 @@ async function runAI(data,transfer,prepare){
   $('cancelAI').disabled=false;
   try{
     if(prepare)({data,transfer}=await prepare(job.signal,data));
-    job.signal.throwIfAborted();
+    if(job.signal.aborted)throw job.signal.reason||new DOMException('中止しました','AbortError');
     return await invokeWorker('ai-worker.js',data,transfer,status,job.signal);
   }finally{aiJob=null;$('cancelAI').disabled=true}
 }
@@ -430,9 +445,16 @@ function lyricInput(){
   return $('lyrics').value.split(/\r?\n/).map(line=>line.replace(/^(?:\s*\[\d+:\d+(?:\.\d+)?\])+/,'').trim()).filter(Boolean);
 }
 $('recognize').onclick=async()=>{
-  if(aiJob||recording)return;
+  if(aiJob||recording){
+    $('syncStatus').textContent='別の処理が実行中です。完了または中止後に実行してください。';
+    return;
+  }
   const file=soundFile, lyrics=$('lyrics').value, lines=lyricInput();
-  if(!file||!lines.length||!Number.isFinite(audio.duration))return status('音源と歌詞を入力してください');
+  const notice = !file ? '先に楽曲ファイルを選択してください。'
+    : !lines.length ? '歌詞を入力してください。'
+    : !Number.isFinite(audio.duration) ? '楽曲の読み込みが完了してから押してください。' : '';
+  if(notice){$('syncStatus').textContent=notice;status(notice);return}
+  syncActive=true;
   candidate=null;$('syncReview').textContent='';$('applySync').disabled=true;
   let context;
   try{
@@ -440,7 +462,7 @@ $('recognize').onclick=async()=>{
       status('音源を読み込み中');
       context=new AudioContext({sampleRate:16000});
       const decoded=await context.decodeAudioData(await file.arrayBuffer());
-      signal.throwIfAborted();
+      if(signal.aborted)throw signal.reason||new DOMException('中止しました','AbortError');
       const samples=decoded.getChannelData(0).slice();
       for(let channel=1;channel<decoded.numberOfChannels;channel++){
         const other=decoded.getChannelData(channel);
@@ -485,7 +507,7 @@ $('recognize').onclick=async()=>{
     status(weak ? `一致率 ${Math.round(result.coverage*100)}%。空欄を補うか、手動またはタップ同期で調整してください。`
       : `同期候補 一致率 ${Math.round(result.coverage*100)}%。文字時刻は推定です。`);
   }catch(error){status(error.name==='AbortError'?'中止しました':error.message)}
-  finally{if(context&&context.state!=='closed')await context.close().catch(()=>{})}
+  finally{syncActive=false;if(context&&context.state!=='closed')await context.close().catch(()=>{})}
 };
 function validateSync(apply) {
   if (!candidate || candidate.file !== soundFile || candidate.lyrics !== $('lyrics').value) {
@@ -521,6 +543,7 @@ function validateSync(apply) {
   $('timing').value = 'manual';
   timeline();
   repaint();
+  $('syncStatus').textContent='同期候補を適用しました。';
   status('同期候補を適用しました');
 }
 $('lyrics').addEventListener('input', () => validateSync(false));
@@ -586,11 +609,11 @@ $('renderLocal').onclick=async()=>{
     status('書き出し準備中');
     context=new AudioContext({sampleRate:48000});
     const buffer=await context.decodeAudioData(await soundFile.arrayBuffer());
-    signal.throwIfAborted();
+    if(signal.aborted)throw signal.reason||new DOMException('中止しました','AbortError');
     const [from,to]=exportRange(buffer.duration), length=to-from;
     const exporter=await import('./video-export.mjs');
     const options=await exporter.encodingOptions(mp4,w,h,buffer.numberOfChannels);
-    signal.throwIfAborted();
+    if(signal.aborted)throw signal.reason||new DOMException('中止しました','AbortError');
     if(options){
       try {
         const file=await exporter.encode(canvas,buffer,from,to,options,
@@ -609,7 +632,7 @@ $('renderLocal').onclick=async()=>{
       return;
     }
     await context.resume();
-    signal.throwIfAborted();
+    if(signal.aborted)throw signal.reason||new DOMException('中止しました','AbortError');
     destination=context.createMediaStreamDestination();
     source=context.createBufferSource();source.buffer=buffer;source.connect(destination);
     draw(from,buffer.duration);
@@ -627,7 +650,7 @@ $('renderLocal').onclick=async()=>{
     catch(error){throw recorderError||error}
     if(recorder.state!=='inactive')recorder.stop();
     await stopped;
-    signal.throwIfAborted();
+    if(signal.aborted)throw signal.reason||new DOMException('中止しました','AbortError');
     if(!chunks.length)throw Error('動画データを取得できませんでした');
     download(new Blob(chunks,{type:recorder.mimeType}),`MV.${mp4?'mp4':'webm'}`);
     status('書き出し完了');
@@ -648,4 +671,6 @@ $('renderLocal').onclick=async()=>{
 $('cancelRender').onclick=()=>renderController?.abort();
 // Keep the cloud ZIP export compatible with saved media and local settings.
 $('export').onclick=async()=>{try{if(!soundFile||!imageFiles.length)throw Error('音源と画像を選択してください');const ext=f=>f.name.split('.').pop().toLowerCase().replace(/[^a-z0-9]/g,'');const p={...Object.fromEntries(['title','lyrics','timing','style','notes'].map(id=>[id,$(id).value])),bpm:+$('bpm').value,intensity:+$('intensity').value,audio:'audio.'+ext(soundFile),images:imageFiles.map((f,i)=>'image'+i+'.'+ext(f)),analysis,aligned,scenePlan,ratio:$('ratio').value,resolution:+$('resolution').value,karaoke:$('karaoke').checked};const entries=[['project.json',new TextEncoder().encode(JSON.stringify(p,null,2))],[p.audio,new Uint8Array(await soundFile.arrayBuffer())]];for(let i=0;i<imageFiles.length;i++)entries.push([p.images[i],new Uint8Array(await imageFiles[i].arrayBuffer())]);download(zip(entries),'mv-materials.zip');status('クラウド用素材ZIPを保存しました')}catch(e){status(e.message)}};
+$('ratio').onchange();
+tick();
 })();

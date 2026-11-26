@@ -1,5 +1,5 @@
-const CACHE='mv-studio-v3.2.1';
-const ASSETS=['./','./index.html','./studio.js','./storage.js','./alignment.js','./analysis-worker.js','./ai-worker.js','./video-export.mjs','./vendor/webm-muxer.mjs','./vendor/mp4-muxer.mjs','./core.js','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
+const CACHE='mv-studio-v3.3';
+const ASSETS=['./','./index.html','./studio.js','./typography.js','./storage.js','./alignment.js','./analysis-worker.js','./ai-worker.js','./video-export.mjs','./vendor/webm-muxer.mjs','./vendor/mp4-muxer.mjs','./core.js','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
 self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS.map(asset=>new Request(new URL(asset,self.location.href),{cache:'reload'}))))));
 self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k.startsWith('mv-studio-')&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener('fetch',e=>{if(e.request.method!=='GET'||new URL(e.request.url).origin!==location.origin)return;e.respondWith(caches.open(CACHE).then(async c=>{const hit=await c.match(e.request);if(hit)return hit;if(e.request.mode==='navigate')return (await c.match('./index.html'))||fetch(e.request);return fetch(e.request)}))});

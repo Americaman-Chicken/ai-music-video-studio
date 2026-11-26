@@ -1,7 +1,7 @@
 /* Monotonic alignment of supplied lyrics to recognizer timestamps. */
 (function (root) {
-  const segmenter = new Intl.Segmenter('ja', {granularity: 'grapheme'});
-  const graphemes = text => Array.from(segmenter.segment(text), item => item.segment);
+  const segmenter = typeof Intl.Segmenter === 'function' ? new Intl.Segmenter('ja', {granularity: 'grapheme'}) : null;
+  const graphemes = text => segmenter ? Array.from(segmenter.segment(text), item => item.segment) : Array.from(text);
   const normalize = text => Array.from(text.normalize('NFKC').toLowerCase()
     .replace(/[\u30a1-\u30f6]/g, char => String.fromCharCode(char.charCodeAt(0) - 96))
     .replace(/[^\p{L}\p{N}]/gu, ''));
@@ -61,7 +61,7 @@
       const hits = row.characters.flatMap(g => matched.get(g) || []);
       row.coverage = hits.length / Math.max(1, normalize(row.text).length);
       row.start = hits.length ? Math.max(lastEnd, hits[0].start) : null;
-      row.end = hits.length ? Math.max(row.start, hits.at(-1).end) : null;
+      row.end = hits.length ? Math.max(row.start, hits[hits.length - 1].end) : null;
       row.words = [...new Set(hits.map(hit => hit.word))];
       if (!hits.length) continue;
       lastEnd = row.end;
@@ -72,7 +72,7 @@
         g.estimated = true;
         if (!own) continue;
         g.start = Math.max(cursor, Math.min(row.end, own[0].start));
-        g.end = Math.max(g.start, Math.min(row.end, own.at(-1).end));
+        g.end = Math.max(g.start, Math.min(row.end, own[own.length - 1].end));
         cursor = g.end;
       }
       // Distribute a gap across missing sung graphemes. Punctuation consumes no time.

@@ -21,7 +21,7 @@ class QuietHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == '/app/sw.js' and self.release > 1:
-            data = (ROOT / 'app/sw.js').read_text().replace('mv-studio-v3.2.1', 'mv-studio-test-update')
+            data = (ROOT / 'app/sw.js').read_text().replace('mv-studio-v3.3', 'mv-studio-test-update')
             self.send_response(200)
             self.send_header('Content-Type', 'text/javascript')
             self.send_header('Cache-Control', 'no-cache')
@@ -82,7 +82,17 @@ def test_ai_integration(browser, base_url, directory):
             self.postMessage({result:{base:{mono:true},scenes:[{start:0,end:1,camera:'pan'}]}});
           }
         };"""))
+    errors = []
+    page.on('pageerror', lambda error: errors.append(str(error)))
+    page.add_init_script("""() => {
+        delete Array.prototype.findLast;
+        delete Array.prototype.findLastIndex;
+        delete Intl.Segmenter;
+        delete AbortSignal.prototype.throwIfAborted;
+    }""")
     page.goto(base_url + '/app/')
+    page.locator('#recognize').click()
+    expect(page.locator('#syncStatus')).to_contain_text('楽曲ファイルを選択')
     page.locator('#audio').set_input_files(directory / 'audio.wav')
     page.wait_for_function('document.querySelector("#player").duration > 1')
     page.locator('#lyrics').fill('夏の歌\n君へ')
@@ -114,6 +124,7 @@ def test_ai_integration(browser, base_url, directory):
     page.locator('#makePlan').click()
     expect(page.locator('#localStatus')).to_have_text('演出プランを更新しました')
     assert json.loads(page.locator('#sceneJson').input_value())['scenes'][0]['camera'] == 'pan'
+    assert not errors, errors
     context.close()
 
 
@@ -238,6 +249,17 @@ def test_browser(base_url, directory):
             page.locator('#renderLocal').click()
             expect(page.locator('#localStatus')).to_contain_text('WebMを選択')
             print('H.264/AAC encoder unavailable. Verified explicit format fallback.', flush=True)
+        page.locator('#typography').select_option('classic')
+        seek = page.locator('#seekTimeline')
+        seek.evaluate("""input => {input.value = .6; input.dispatchEvent(new Event('input'));}""")
+        page.wait_for_function('!document.querySelector("#player").seeking && document.querySelector("#player").currentTime === .6')
+        preview = page.locator('#preview')
+        classic = preview.evaluate('canvas => canvas.toDataURL()')
+        page.locator('#typography').select_option('vertical')
+        assert preview.evaluate('canvas => canvas.toDataURL()') != classic
+        page.locator('#typography').select_option('arc')
+        assert preview.evaluate('canvas => canvas.toDataURL()') != classic
+        page.locator('#typography').select_option('auto')
         path = export(page, directory, codec, 'landscape', 2.0)
         converted = directory / 'portrait-converted.mp4'
         conversion = [sys.executable, str(ROOT / 'convert_mp4.py'), str(portrait_webm), str(converted)]
@@ -269,7 +291,7 @@ def test_browser(base_url, directory):
         page.close()
         page = context.new_page()
         page.goto(base_url + '/app/')
-        page.wait_for_function("caches.keys().then(keys => keys.includes('mv-studio-test-update') && !keys.includes('mv-studio-v3.2.1'))")
+        page.wait_for_function("caches.keys().then(keys => keys.includes('mv-studio-test-update') && !keys.includes('mv-studio-v3.3'))")
         assert not errors, errors
         assert not external, external
         context.close()
