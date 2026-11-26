@@ -19,7 +19,15 @@ jobs:
         with:
           python-version: '3.11'
       - run: node tests/core.test.cjs && python -m unittest discover -s tests
-      - run: pip install playwright pillow && python -m playwright install --with-deps chromium
+      - run: pip install playwright pillow
+      - name: Select Chromium for the browser tests
+        timeout-minutes: 2
+        run: |
+          if chrome=$(command -v google-chrome || command -v chromium); then
+            printf 'CHROMIUM_PATH=%s\n' "$chrome" >> "$GITHUB_ENV"
+          else
+            python -m playwright install --with-deps chromium
+          fi
       - name: Ensure FFmpeg and ffprobe are available
         timeout-minutes: 2
         run: |
