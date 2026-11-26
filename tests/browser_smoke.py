@@ -21,7 +21,7 @@ class QuietHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == '/app/sw.js' and self.release > 1:
-            data = (ROOT / 'app/sw.js').read_text().replace('mv-studio-v3.4', 'mv-studio-test-update')
+            data = (ROOT / 'app/sw.js').read_text().replace('mv-studio-v3.5', 'mv-studio-test-update')
             self.send_response(200)
             self.send_header('Content-Type', 'text/javascript')
             self.send_header('Cache-Control', 'no-cache')
@@ -112,6 +112,19 @@ def test_ai_integration(browser, base_url, directory):
     expect(page.locator('#lyrics')).to_have_value('夏の歌\n君へ')
     page.locator('#applySync').click()
     expect(page.locator('#lyrics')).to_have_value('[00:00.20] 夏の歌\n[00:01.00] 君へ')
+    raw = page.locator('#rawSubtitles').input_value()
+    assert '00:00:00,200 --> 00:00:01,500' in raw
+    page.locator('#lyrics').fill('夏の空\n君へ')
+    page.locator('#correctSubtitles').click()
+    expect(page.locator('#syncReview')).to_contain_text('認識字幕: 夏の歌')
+    expect(page.locator('#applySync')).to_be_enabled()
+    expect(page.locator('#lyrics')).to_have_value('夏の空\n君へ')
+    page.locator('#applySync').click()
+    expect(page.locator('#lyrics')).to_have_value('[00:00.20] 夏の空\n[00:01.00] 君へ')
+    assert page.locator('#rawSubtitles').input_value() == raw
+    with page.expect_download() as download:
+        page.locator('#saveRawSubtitles').click()
+    assert download.value.suggested_filename == 'recognized.srt'
     page.locator('#lyrics').fill('猫と犬')
     page.locator('#recognize').click()
     expect(page.locator('#localStatus')).to_contain_text('手動またはタップ同期')
@@ -331,7 +344,7 @@ def test_browser(base_url, directory):
         page.close()
         page = context.new_page()
         page.goto(base_url + '/app/')
-        page.wait_for_function("caches.keys().then(keys => keys.includes('mv-studio-test-update') && !keys.includes('mv-studio-v3.4'))")
+        page.wait_for_function("caches.keys().then(keys => keys.includes('mv-studio-test-update') && !keys.includes('mv-studio-v3.5'))")
         assert not errors, errors
         assert not external, external
         context.close()

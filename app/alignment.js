@@ -7,12 +7,12 @@
     .replace(/[^\p{L}\p{N}]/gu, ''));
 
   function align(lines, chunks, duration) {
-    const words = chunks.flatMap(({text, timestamp}) => {
+    const words = chunks.flatMap(({text, timestamp, captionIndex}) => {
       const [start, end] = timestamp || [];
       if (typeof text !== 'string' || !Number.isFinite(start) || !Number.isFinite(end)) return [];
       const from = Math.max(0, start);
       const to = Math.min(end, duration);
-      return to > from ? [{text, start: from, end: to}] : [];
+      return to > from ? [{text, start: from, end: to, captionIndex}] : [];
     }).sort((a, b) => a.start - b.start);
     const heard = words.flatMap(word => {
       const chars = normalize(word.text);
@@ -141,7 +141,64 @@
     return lines.map(line => ({...line, text: line.text.trim()}));
   }
 
-  const api = {align, graphemes, vocalRanges, transcribe};
+  function correctSubtitles(lyrics, subtitles, duration) {
+    const result = align(lyrics, subtitles.flatMap((subtitle, captionIndex) => subtitle.words.map(word => ({
+      text: word.text, timestamp: [word.start, word.end], captionIndex,
+    }))), duration);
+    const captionUse = new Map();
+    const sources = result.lines.map(line => {
+      const ids = [...new Set(line.words.map(word => word.captionIndex))];
+      for (const id of ids) captionUse.set(id, (captionUse.get(id) || 0) + 1);
+      return ids;
+    });
+    result.lines.forEach((line, index) => {
+      const ids = sources[index];
+      line.recognizedText = line.words.map(word => word.text).join(' ');
+      // A row that spans distant recognition fragments has no trustworthy start.
+      const fragmented = line.words.some((word, i) => i && word.start - line.words[i - 1].end > 2);
+      if (fragmented) {
+        Object.assign(line, {start: null, end: null, coverage: 0, characters: []});
+        return;
+      }
+      if (ids.length !== 1 || captionUse.get(ids[0]) !== 1 || line.coverage < .55) return;
+      const caption = subtitles[ids[0]];
+      const start = Math.max(result.lines[index - 1]?.end ?? 0, caption.start, line.start - .45);
+      const end = Math.min(result.lines[index + 1]?.start ?? duration, caption.end, line.end + .45);
+      if (start < line.start) {
+        const first = line.characters.findIndex(character => character.matched);
+        for (let i = 0; i < first; i++) {
+          line.characters[i].start = start + (line.start - start) * i / first;
+          line.characters[i].end = start + (line.start - start) * (i + 1) / first;
+        }
+        line.start = start;
+      }
+      if (end > line.end) {
+        let last = line.characters.length - 1;
+        while (last >= 0 && !line.characters[last].matched) last--;
+        const count = line.characters.length - last - 1;
+        for (let i = 0; i < count; i++) {
+          const character = line.characters[last + 1 + i];
+          character.start = line.end + (end - line.end) * i / count;
+          character.end = line.end + (end - line.end) * (i + 1) / count;
+        }
+        line.end = end;
+      }
+    });
+    const total = result.lines.reduce((sum, line) => sum + normalize(line.text).length, 0);
+    result.coverage = result.lines.reduce((sum, line) => sum + normalize(line.text).length * line.coverage, 0) / total;
+    return result;
+  }
+
+  function srt(subtitles) {
+    function time(seconds) {
+      const ms = Math.max(0, Math.round(seconds * 1000));
+      const [hours, minutes, secs] = [Math.floor(ms / 3600000), Math.floor(ms / 60000) % 60, Math.floor(ms / 1000) % 60];
+      return [hours, minutes, secs].map(value => String(value).padStart(2, '0')).join(':') + ',' + String(ms % 1000).padStart(3, '0');
+    }
+    return subtitles.map((row, index) => `${index + 1}\r\n${time(row.start)} --> ${time(row.end)}\r\n${row.text}\r\n`).join('\r\n');
+  }
+
+  const api = {align, graphemes, vocalRanges, transcribe, correctSubtitles, srt};
   if (typeof module !== 'undefined') module.exports = api;
   else root.MVAlignment = api;
 })(globalThis);

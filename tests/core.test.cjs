@@ -53,3 +53,17 @@ assert.deepEqual(transcribe([
 ]).map(({text,start,end}) => ({text,start,end})), [
   {text:'夜の歌',start:8,end:8.6}, {text:'光',start:8.9,end:9.2}, {text:'次へ',start:13.7,end:14.2},
 ]);
+
+const {correctSubtitles, srt} = require('../app/alignment.js');
+const recognition = transcribe([
+  {text:'偽',timestamp:[8,8.3]}, {text:'の歌',timestamp:[8.3,8.8]},
+  {text:'光へ',timestamp:[14,14.7],breakBefore:true},
+]);
+const corrected = correctSubtitles(['夜の歌','光へ'], recognition, 20);
+assert.equal(corrected.lines[0].text, '夜の歌');
+assert.equal(corrected.lines[0].start, 8);
+assert.equal(corrected.lines[0].characters[0].end, 8.3);
+assert.equal(corrected.lines[1].start, 14);
+assert.equal(recognition[0].text, '偽の歌');
+assert.ok(srt(recognition).includes('00:00:08,000 --> 00:00:08,800\r\n偽の歌'));
+assert.equal(correctSubtitles(['偽の歌光へ'], recognition, 20).lines[0].start, null);
