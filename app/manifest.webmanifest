@@ -1,1 +1,24 @@
-{"name":"AI Music Video Studio","short_name":"MV Studio","start_url":"./","scope":"./","display":"standalone","background_color":"#101018","theme_color":"#101018","icons":[{"src":"icon-192.png","sizes":"192x192","type":"image/png"},{"src":"icon-512.png","sizes":"512x512","type":"image/png"}]}
+{
+  "name": "AI Music Video Studio",
+  "short_name": "MV Studio",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#101018",
+  "theme_color": "#101018",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "id": "./",
+  "lang": "ja",
+  "description": "楽曲・歌詞・イラストから端末内でミュージックビデオを制作"
+}
