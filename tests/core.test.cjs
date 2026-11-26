@@ -80,3 +80,18 @@ assert.equal(layers.modeAt('wave', {index:2}), 'wave');
 assert.equal(layers.bandOffset(3, 2, 40), layers.bandOffset(3, 2, 40));
 assert.notEqual(layers.bandOffset(3, 2, 40), layers.bandOffset(3, 3, 40));
 assert.equal(c.scenes('8-12秒: 巨大文字で切り抜く', [], 20).scenes[0].layerEffect, 'mask');
+
+const {arrange} = require('../app/typography.js');
+const cue = {style:'glitch',energy:.5,motion:.1};
+const quietLook=arrange('光がほどける',0,'auto','auto',{...cue,energy:.12});
+const chorusLook=arrange('光がほどける',0,'auto','auto',{...cue,chorus:true});
+const sharpLook=arrange('光がほどける',0,'auto','auto',{...cue,motion:.85});
+assert.equal(quietLook.brush,'fine');
+assert.equal(chorusLook.brush,'heavy');
+assert.equal(sharpLook.brush,'sharp');
+assert.notEqual(quietLook.mode,chorusLook.mode);
+assert.deepEqual(arrange('光がほどける',0,'stairs','round',{...cue,chorus:true}),{mode:'stairs',brush:'round'});
+const direction=c.scenes('8-12秒: 一文字を大きく、太筆',[],20).scenes[0];
+assert.equal(direction.typography,'hero');
+assert.equal(direction.brush,'heavy');
+assert.equal(longAnalysis.motion.length, longAnalysis.energy.length);

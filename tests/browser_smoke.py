@@ -21,7 +21,7 @@ class QuietHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == '/app/sw.js' and self.release > 1:
-            data = (ROOT / 'app/sw.js').read_text().replace('mv-studio-v3.6', 'mv-studio-test-update')
+            data = (ROOT / 'app/sw.js').read_text().replace('mv-studio-v3.7', 'mv-studio-test-update')
             self.send_response(200)
             self.send_header('Content-Type', 'text/javascript')
             self.send_header('Cache-Control', 'no-cache')
@@ -257,6 +257,27 @@ def test_video_layers(browser, base_url, directory):
     pixel = subprocess.check_output(['ffmpeg', '-v', 'error', '-ss', '0.8',
         '-i', str(path), '-frames:v', '1', '-vf', 'format=rgb24,crop=1:1:100:100', '-f', 'rawvideo', '-'])
     assert pixel[2] > pixel[0] + 12, list(pixel)
+    ink_areas = page.evaluate("""() => ['fine','round','heavy','sharp'].map(profile => {
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = 120;
+        const ctx = canvas.getContext('2d');
+        ctx.translate(60,60);
+        if (!MVInk.paint(ctx,'光',90,1,'white','transparent',false,profile)) throw Error('Missing stroke data');
+        const pixels = ctx.getImageData(0,0,120,120).data;
+        return pixels.filter((v,i) => i%4===3 && v>128).length;
+    })""")
+    assert ink_areas[2] > ink_areas[0] * 2 and len(set(ink_areas)) == 4, ink_areas
+    page.locator('#previewLayer').select_option('all')
+    page.locator('#player').evaluate('audio => {audio.currentTime = .8;}')
+    page.wait_for_function('!document.querySelector("#player").seeking')
+    page.locator('#editLyricScene').click()
+    expect(page.locator('#sceneEditor')).to_be_visible()
+    page.locator('#sceneTypography').select_option('hero')
+    page.locator('#sceneBrush').select_option('heavy')
+    page.locator('#saveScene').click()
+    plan = json.loads(page.locator('#sceneJson').input_value())
+    assert len(plan['scenes']) == 1 and plan['scenes'][0]['typography'] == 'hero'
+    assert plan['scenes'][0]['brush'] == 'heavy'
     assert not errors, errors
     context.close()
 
@@ -424,7 +445,7 @@ def test_browser(base_url, directory):
         page.close()
         page = context.new_page()
         page.goto(base_url + '/app/')
-        page.wait_for_function("caches.keys().then(keys => keys.includes('mv-studio-test-update') && !keys.includes('mv-studio-v3.6'))")
+        page.wait_for_function("caches.keys().then(keys => keys.includes('mv-studio-test-update') && !keys.includes('mv-studio-v3.7'))")
         assert not errors, errors
         assert not external, external
         context.close()

@@ -1,4 +1,4 @@
-const CACHE='mv-studio-v3.6';
+const CACHE='mv-studio-v3.7';
 const ASSETS=['./','./index.html','./studio.js','./typography.js','./layers.js','./ink.js','./vendor/kanjivg.js','./storage.js','./alignment.js','./analysis-worker.js','./ai-worker.js','./video-export.mjs','./vendor/webm-muxer.mjs','./vendor/mp4-muxer.mjs','./core.js','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
 self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS.map(asset=>new Request(new URL(asset,self.location.href),{cache:'reload'}))))));
 self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k.startsWith('mv-studio-')&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));

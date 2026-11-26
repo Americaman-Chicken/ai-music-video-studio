@@ -2,7 +2,7 @@
 'use strict';
 const $=id=>document.getElementById(id), audio=$('player'), canvas=$('preview');
 let requestedAudio=null,requestedImages=[],imageFiles=[],soundFile=null, pictures=[],url=null,analysis=null,recording=false, aligned=[],scenePlan=null,mediaGeneration=0,mediaLoads=0,analyzing=false;
-const fields=['title','lyrics','timing','style','bpm','intensity','notes','ratio','resolution','rangeStart','rangeEnd','format','planEngine','typography','introEnd','instrumentals','layerEffects','foregroundMode'];
+const fields=['title','lyrics','timing','style','bpm','intensity','notes','ratio','resolution','rangeStart','rangeEnd','format','planEngine','typography','introEnd','instrumentals','layerEffects','foregroundMode','letterBrush'];
 let syncActive=false, subtitleDraft=null;
 let projectId=null, projectBusy=false, aiJob=null, candidate=null, renderController=null;
 function status(message) {
@@ -154,8 +154,17 @@ function paintLyrics(context, w, h, time, visual, lyric) {
   const characters = MVAlignment.graphemes(row.text);
   const mode = effects.typography || $('typography').value;
   if (mode !== 'classic' && typeof MVTypography !== 'undefined') {
+    const middle = row.start + Math.min(.7, (end - row.start) * .5);
+    const at = Math.floor(middle * 2);
+    const section = analysis?.sections.find(item => middle >= item.start && middle < item.end);
+    const energy = analysis?.energy?.[at] ?? null;
+    const motion = analysis?.motion?.[at] ?? 0;
+    const letterStyle = MVTypography.arrange(row.text,index,mode,effects.brush||$('letterBrush').value,{
+      style:effects.base,energy,motion,quiet:effects.quiet||section?.kind==='静かな区間',
+      chorus:section?.kind?.startsWith('サビ'),shake:effects.shake,
+    });
     MVTypography.paint(context, w, h, {
-      mode, animation: effects.animation, characters, index, elapsed, length: Math.max(.01, end - row.start),
+      ...letterStyle, animation: effects.animation, characters, index, elapsed, length: Math.max(.01, end - row.start),
       pulse: visual.pulse, strength: visual.strength, style: effects.base,
       progress: $('karaoke').checked ? MVCore.progress(row, time, end, aligned) : null,
     });
@@ -294,7 +303,7 @@ function parsePlan(input, duration) {
     for(const key of ['mono','shake','quiet','flash','vignette','center','noText','explicitImage']){
       if(key in source){if(typeof source[key]!=='boolean')throw Error('演出設定が不正です');result[key]=source[key]}
     }
-    for(const [key,options] of Object.entries({camera:['in','out','pan','drift','default'],animation:['type','fade','bounce','default'],typography:['auto','poster','vertical','arc','split','classic'],layerEffect:['none','auto','mask','tiles','wave','glitch']})){
+    for(const [key,options] of Object.entries({camera:['in','out','pan','drift','default'],animation:['type','fade','bounce','default'],typography:['auto','poster','vertical','arc','split','hero','stairs','margin','classic'],brush:['auto','fine','round','heavy','sharp'],layerEffect:['none','auto','mask','tiles','wave','glitch']})){
       if(source[key]!==undefined){if(!options.includes(source[key]))throw Error('演出設定が不正です');result[key]=source[key]}
     }
     if(result.explicitImage){
@@ -311,6 +320,7 @@ function parsePlan(input, duration) {
 function setPlan(value){
   scenePlan=value;
   $('sceneEditor').hidden=true;
+  $('lyricSceneStatus').textContent='';
   $('sceneJson').value=value?JSON.stringify(value,null,2):'';
   timeline();
   repaint();
@@ -352,8 +362,10 @@ $('makePlan').onclick=()=>generatePlan(false);
 $('regenerate').onclick=()=>generatePlan(true);
 $('applyPlan').onclick=()=>{try{setPlan(parsePlan(JSON.parse($('sceneJson').value),audio.duration));status('演出プランを適用しました')}catch(e){status(e.message)}};
 function seekTo(time){if(Number.isFinite(audio.duration))audio.currentTime=Math.max(0,Math.min(audio.duration,time))}
-function editScene(index) {
-  const scene=scenePlan?.scenes[index];
+let lineSceneDraft=null;
+function editScene(index, draft=null) {
+  lineSceneDraft=draft;
+  const scene=draft||scenePlan?.scenes[index];
   if(!scene)return;
   $('sceneEditor').hidden=false;
   $('sceneIndex').value=index;
@@ -366,18 +378,40 @@ function editScene(index) {
   $('sceneCamera').value=scene.camera||'default';
   $('sceneAnimation').value=scene.animation||'default';
   $('sceneTypography').value=scene.typography||'';
+  $('sceneBrush').value=scene.brush||'';
   $('sceneLayerEffects').value=scene.layerEffect||'';
   $('sceneVignette').checked=Boolean(scene.vignette);
 }
+$('editLyricScene').onclick=()=>{
+  const lyric=Number.isFinite(audio.duration)&&activeLyric(audio.currentTime,audio.duration);
+  if(!lyric){
+    $('lyricSceneStatus').textContent='タイムラインで歌詞行を選ぶか、歌詞が出る位置に再生位置を合わせてください。';
+    return;
+  }
+  const {row,end}=lyric;
+  const existing=MVCore.lastIndex(scenePlan?.scenes||[],scene=>scene.start===row.start&&scene.end===end);
+  $('lyricSceneStatus').textContent=`編集中の歌詞「${row.text}」`;
+  if(existing>=0){editScene(existing);return}
+  const source=scenePlan||MVCore.scenes($('notes').value,analysis?.sections||[],audio.duration);
+  const matching=source.scenes[MVCore.lastIndex(source.scenes,scene=>scene.start<=row.start&&scene.end>row.start)];
+  editScene(-1,{...source.base,...matching,start:row.start,end});
+};
 $('saveScene').onclick=()=>{
   try{
     const index=+$('sceneIndex').value, image=$('sceneImage').value;
-    const scenes=scenePlan.scenes.slice();
-    scenes[index]={...scenes[index],start:$('sceneStart').valueAsNumber,end:$('sceneEnd').valueAsNumber,
-      explicitImage:image!=='',image:+image,camera:$('sceneCamera').value,animation:$('sceneAnimation').value,typography:$('sceneTypography').value||undefined,layerEffect:$('sceneLayerEffects').value||undefined,vignette:$('sceneVignette').checked};
-    setPlan(parsePlan({...scenePlan,scenes},audio.duration));
-    editScene(index);status('区間演出を更新しました');
-  }catch(error){status(error.message)}
+    const previous=scenePlan||MVCore.scenes($('notes').value,analysis?.sections||[],audio.duration);
+    const scenes=previous.scenes.slice();
+    const updated={...(index<0?lineSceneDraft:scenes[index]),start:$('sceneStart').valueAsNumber,end:$('sceneEnd').valueAsNumber,
+      explicitImage:image!=='',image:+image,camera:$('sceneCamera').value,animation:$('sceneAnimation').value,
+      typography:$('sceneTypography').value||undefined,brush:$('sceneBrush').value||undefined,
+      layerEffect:$('sceneLayerEffects').value||undefined,vignette:$('sceneVignette').checked};
+    if(index<0)scenes.push(updated);
+    else scenes[index]=updated;
+    setPlan(parsePlan({...previous,scenes},audio.duration));
+    editScene(index<0?scenes.length-1:index);
+    $('lyricSceneStatus').textContent='区間演出を更新しました。';
+    status('区間演出を更新しました');
+  }catch(e){$('lyricSceneStatus').textContent=e.message;status(e.message)}
 };
 function renderTracks(rows){
   const root=$('timelineTracks'),duration=audio.duration;
