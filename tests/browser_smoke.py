@@ -21,7 +21,7 @@ class QuietHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == '/app/sw.js' and self.release > 1:
-            data = (ROOT / 'app/sw.js').read_text().replace('mv-studio-v3.5.1', 'mv-studio-test-update')
+            data = (ROOT / 'app/sw.js').read_text().replace('mv-studio-v3.5.2', 'mv-studio-test-update')
             self.send_response(200)
             self.send_header('Content-Type', 'text/javascript')
             self.send_header('Cache-Control', 'no-cache')
@@ -180,6 +180,24 @@ def test_ai_integration(browser, base_url, directory):
     assert brush_count_at(.95) == 0
     assert brush_count_at(1.35) == 0
     assert brush_count_at(1.7) > 0
+    page.locator('#lyrics').fill('')
+    page.locator('#saveProject').click()
+    expect(page.locator('#localStatus')).to_contain_text('保存しました')
+    page.reload()
+    expect(page.locator('#projectList option')).to_have_count(2)
+    page.locator('#restoreProject').click()
+    expect(page.locator('#localStatus')).to_contain_text('復元しました')
+    page.wait_for_function('document.querySelector("#player").duration === 2')
+    expect(page.locator('#applySync')).to_be_disabled()
+    expect(page.locator('#correctSubtitles')).to_have_text('認識字幕を同期候補にする')
+    page.locator('#introEnd').fill('1.1')
+    expect(page.locator('#correctSubtitles')).to_be_enabled()
+    page.locator('#correctSubtitles').click()
+    expect(page.locator('#syncStatus')).to_contain_text('既存字幕を使用')
+    expect(page.locator('#candidateTime0')).to_have_value('1.40')
+    expect(page.locator('#syncReview input')).to_have_count(1)
+    page.locator('#applySync').click()
+    expect(page.locator('#lyrics')).to_have_value('[00:01.40] 光')
     page.locator('#planEngine').select_option('llm')
     page.locator('#notes').fill('待機')
     page.locator('#makePlan').click()
@@ -359,7 +377,7 @@ def test_browser(base_url, directory):
         page.close()
         page = context.new_page()
         page.goto(base_url + '/app/')
-        page.wait_for_function("caches.keys().then(keys => keys.includes('mv-studio-test-update') && !keys.includes('mv-studio-v3.5.1'))")
+        page.wait_for_function("caches.keys().then(keys => keys.includes('mv-studio-test-update') && !keys.includes('mv-studio-v3.5.2'))")
         assert not errors, errors
         assert not external, external
         context.close()

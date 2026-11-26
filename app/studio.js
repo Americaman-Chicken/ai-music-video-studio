@@ -461,7 +461,7 @@ $('restoreProject').onclick=async()=>{
     }
     $('karaoke').checked=Boolean(p.karaoke);$('spectrum').checked=Boolean(p.spectrum);
     projectId=id;analysis=p.analysis||null;aligned=p.aligned||[];
-    subtitleDraft=p.subtitleDraft||null;renderSubtitleDraft();
+    subtitleDraft=p.subtitleDraft||null;renderSubtitleDraft();validateSync(false);
     setPlan(p.scenePlan||null);renderSections();$('ratio').onchange();status('復元しました。');
   }catch(e){status(e.message)}finally{projectBusy=false}
 };
@@ -567,26 +567,37 @@ function renderSubtitleDraft(){
   $('subtitleDraft').hidden=!subtitles.length;
   $('subtitleCount').textContent=`認識字幕 ${subtitles.length} 行`;
   $('rawSubtitles').value=subtitles.length?MVAlignment.srt(subtitles):'';
-  $('correctSubtitles').disabled=!subtitles.length||subtitleDraft.rangeKey!==currentVocalKey()||!lyricInput().length;
+  $('correctSubtitles').disabled=!subtitles.length;
+  $('correctSubtitles').textContent=lyricInput().length ? '入力した歌詞で字幕を再照合' : '認識字幕を同期候補にする';
 }
 function reviewSubtitles(){
   candidate=null;
   validateSync(false);
   $('syncReview').replaceChildren();
   const file=soundFile, lyrics=$('lyrics').value, lines=lyricInput();
-  const {rangeKey,subtitles}=subtitleDraft;
+  const rangeKey=currentVocalKey();
   const ranges=readVocalRanges(audio.duration);
+  const rangeChanged=subtitleDraft.rangeKey!==rangeKey;
+  const subtitles=rangeChanged ? MVAlignment.subtitlesInRanges(subtitleDraft.subtitles,ranges) : subtitleDraft.subtitles;
+  if(!subtitles.length)throw Error('現在の歌唱範囲に認識字幕がありません。「音源から字幕を作る」を押してください。');
   const extract=lines.length===0;
   const result=extract?{lines:subtitles}:MVAlignment.correctSubtitles(lines,subtitles,audio.duration);
   const weak = !extract && (result.coverage < .55 || result.lines.some(line => line.coverage < .4));
   candidate = {file,lyrics,ranges,rangeKey,lines:result.lines,inputs:[]};
   const review = $('syncReview');
+  let lastStart = -1;
   for (const [index,line] of result.lines.entries()) {
     const label = document.createElement('label');
     label.textContent = extract ? line.text : `${line.text} (${Math.round(line.coverage * 100)}%)`;
     const input = document.createElement('input');
     input.type = 'number'; input.min = 0; input.step = .01;
-    if (line.coverage >= (weak ? .55 : .4)) input.value = line.start.toFixed(2);
+    if (Number.isFinite(line.start) && line.coverage >= (weak ? .55 : .4)) {
+      const start = Math.round(line.start * 100) / 100;
+      if (start > lastStart && ranges.some(range => start >= range.start && start < range.end)) {
+        input.value = start.toFixed(2);
+        lastStart = start;
+      }
+    }
     input.placeholder = '開始時刻（秒）';
     input.oninput = () => validateSync(false);
     label.htmlFor = input.id = 'candidateTime' + index;
@@ -622,14 +633,19 @@ function reviewSubtitles(){
     candidate.inputs.push(input);
   }
   validateSync(false);
-  status(extract ? `文字起こし候補 ${result.lines.length} 行。試聴してから適用してください。` : weak ? `一致率 ${Math.round(result.coverage*100)}%。空欄を補うか、手動またはタップ同期で調整してください。`
-    : `同期候補 一致率 ${Math.round(result.coverage*100)}%。文字時刻は推定です。`);
+  const summary = extract ? `文字起こし候補 ${result.lines.length} 行。試聴してから適用してください。` : weak ? `一致率 ${Math.round(result.coverage*100)}%。空欄を補うか、手動またはタップ同期で調整してください。`
+    : `同期候補 一致率 ${Math.round(result.coverage*100)}%。文字時刻は推定です。`;
+  status(rangeChanged ? summary + ' 現在の範囲内にある既存字幕を使用しました。新しく含めた区間は再認識が必要です。' : summary);
 }
 $('saveRawSubtitles').onclick=()=>{
   if(subtitleDraft)download(new Blob([MVAlignment.srt(subtitleDraft.subtitles)],{type:'application/x-subrip;charset=utf-8'}),'recognized.srt');
 };
 $('correctSubtitles').onclick=()=>{
-  if(!subtitleDraft||subtitleDraft.rangeKey!==currentVocalKey()||!lyricInput().length||recording||aiJob)return;
+  if(!subtitleDraft||recording||aiJob)return;
+  if(!Number.isFinite(audio.duration)){
+    $('syncStatus').textContent='楽曲の読み込みが完了してから押してください。';
+    return;
+  }
   syncActive=true;
   try {reviewSubtitles();}
   catch(error){status(error.message);}
@@ -641,7 +657,7 @@ function validateSync(apply) {
   button.textContent = '同期候補を適用';
   button.disabled = true;
   if (!candidate) {
-    hint.textContent = '';
+    hint.textContent = subtitleDraft ? '上のボタンで認識字幕から候補を作り直せます。' : '先に「音源から字幕を作る」を押してください。';
     return;
   }
   if (candidate.file !== soundFile || candidate.lyrics !== $('lyrics').value || candidate.rangeKey !== currentVocalKey()) {

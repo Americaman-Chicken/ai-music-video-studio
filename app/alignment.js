@@ -136,9 +136,27 @@
       }
       row.text += text.replace(/[\r\n]+/g, ' ');
       row.end = Math.max(row.end, end);
-      row.words.push({text: text.trim(), start, end});
+      row.words.push({text, start, end});
     }
     return lines.map(line => ({...line, text: line.text.trim()}));
+  }
+
+  function subtitlesInRanges(subtitles, ranges) {
+    const chunks = [];
+    for (const range of ranges) {
+      for (const subtitle of subtitles) {
+        let breakBefore = true;
+        for (const word of subtitle.words) {
+          const start = Math.max(range.start, word.start), end = Math.min(range.end, word.end);
+          // A word belongs to the range containing its midpoint.
+          const midpoint = (word.start + word.end) / 2;
+          if (midpoint < range.start || midpoint >= range.end || end <= start) continue;
+          chunks.push({text: word.text, timestamp: [start, end], breakBefore});
+          breakBefore = false;
+        }
+      }
+    }
+    return transcribe(chunks);
   }
 
   function correctSubtitles(lyrics, subtitles, duration) {
@@ -198,7 +216,7 @@
     return subtitles.map((row, index) => `${index + 1}\r\n${time(row.start)} --> ${time(row.end)}\r\n${row.text}\r\n`).join('\r\n');
   }
 
-  const api = {align, graphemes, vocalRanges, transcribe, correctSubtitles, srt};
+  const api = {align, graphemes, vocalRanges, transcribe, subtitlesInRanges, correctSubtitles, srt};
   if (typeof module !== 'undefined') module.exports = api;
   else root.MVAlignment = api;
 })(globalThis);

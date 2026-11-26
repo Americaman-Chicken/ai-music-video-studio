@@ -67,3 +67,8 @@ assert.equal(corrected.lines[1].start, 14);
 assert.equal(recognition[0].text, '偽の歌');
 assert.ok(srt(recognition).includes('00:00:08,000 --> 00:00:08,800\r\n偽の歌'));
 assert.equal(correctSubtitles(['偽の歌光へ'], recognition, 20).lines[0].start, null);
+
+const reused = require('../app/alignment.js').subtitlesInRanges(recognition, [{start: 8.2, end: 9}]);
+assert.equal(reused.length, 1);
+assert.equal(reused[0].text, 'の歌');
+assert.equal(reused[0].start, 8.3);
