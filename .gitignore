@@ -1,0 +1,6 @@
+public/*
+!public/.gitkeep
+out/
+node_modules/
+__pycache__/
+*.zip

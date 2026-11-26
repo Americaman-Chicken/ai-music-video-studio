@@ -1,0 +1,1 @@
+{"name":"mobile-mv-studio","version":"1.0.0","private":true,"scripts":{"render":"node render.mjs"},"dependencies":{"remotion":"4.0.414","@remotion/bundler":"4.0.414","@remotion/renderer":"4.0.414","react":"18.3.1","react-dom":"18.3.1"}}
