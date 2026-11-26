@@ -7,8 +7,13 @@ self.onmessage = async ({data}) => {
       env.allowLocalModels = false;
       env.useBrowserCache = true;
       env.backends.onnx.wasm.numThreads = 1;
-      const recognize = await pipeline('automatic-speech-recognition', 'onnx-community/whisper-tiny_timestamped', {
-        device: 'wasm', dtype: 'q8', revision: '517244293732ee2d58139af5814231b7e6830a0d',
+      const models = {
+        tiny: ['onnx-community/whisper-tiny_timestamped', '517244293732ee2d58139af5814231b7e6830a0d'],
+        base: ['onnx-community/whisper-base_timestamped', '608c49e61301901684bc36cac8f74b95ff6b5a8e'],
+      };
+      const [model, revision] = data.model === 'base' ? models.base : models.tiny;
+      const recognize = await pipeline('automatic-speech-recognition', model, {
+        device: 'wasm', dtype: 'q8', revision,
         progress_callback: event => {
           if (event.status === 'progress') progress(`モデル取得中 ${Math.floor(event.progress || 0)}%`);
         },
@@ -36,9 +41,9 @@ self.onmessage = async ({data}) => {
     } else if (data.action === 'plan') {
       const adapter = await navigator.gpu?.requestAdapter();
       if (!adapter) throw Error('WebGPUを利用できません');
-      if (!adapter.features.has('shader-f16')) throw Error('この端末のWebGPUは演出モデルの演算形式に非対応です');
+      const variant = adapter.features.has('shader-f16') ? 'q4f16_1' : 'q4f32_1';
       const {CreateMLCEngine} = await import('https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.79/+esm');
-      const engine = await CreateMLCEngine('Qwen2.5-0.5B-Instruct-q4f16_1-MLC', {
+      const engine = await CreateMLCEngine(`Qwen2.5-0.5B-Instruct-${variant}-MLC`, {
         initProgressCallback: event => progress(`演出モデルを準備中 ${Math.floor(event.progress * 100)}%`),
       });
       progress('演出プランを生成中');

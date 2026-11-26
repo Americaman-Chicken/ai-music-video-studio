@@ -31,3 +31,12 @@ assert.ok(Math.abs(longAnalysis.bpm - 120) <= 3);
 assert.ok(longAnalysis.beats.length >= 350);
 assert.ok(longAnalysis.sections.length > 4);
 assert.ok(longAnalysis.sections.every(section => Number.isFinite(section.repetition)));
+
+const gapped = align(['夏の、夜の歌'], [
+  {text: '夏', timestamp: [1, 1.5]},
+  {text: '歌', timestamp: [3, 3.5]},
+], 4).lines[0];
+assert.deepEqual(gapped.characters.map(({start, end}) => [start, end]), [
+  [1, 1.5], [1.5, 2], [2, 2], [2, 2.5], [2.5, 3], [3, 3.5],
+]);
+assert.equal(gapped.coverage, .4);

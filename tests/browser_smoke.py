@@ -6,6 +6,7 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import subprocess
+import sys
 from tempfile import TemporaryDirectory
 from threading import Thread
 
@@ -20,7 +21,7 @@ class QuietHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == '/app/sw.js' and self.release > 1:
-            data = (ROOT / 'app/sw.js').read_text().replace('mv-studio-v3.2', 'mv-studio-test-update')
+            data = (ROOT / 'app/sw.js').read_text().replace('mv-studio-v3.2.1', 'mv-studio-test-update')
             self.send_response(200)
             self.send_header('Content-Type', 'text/javascript')
             self.send_header('Cache-Control', 'no-cache')
@@ -96,6 +97,9 @@ def test_ai_integration(browser, base_url, directory):
     expect(page.locator('#applySync')).to_be_disabled()
     expect(page.locator('#lyrics')).to_have_value('猫と犬')
     page.locator('#candidateTime0').fill('0.5')
+    page.get_by_role('button', name='1 行目の時刻を試聴').click()
+    page.wait_for_function("!document.querySelector('#player').paused")
+    page.locator('#player').evaluate('audio => audio.pause()')
     page.locator('#applySync').click()
     expect(page.locator('#lyrics')).to_have_value('[00:00.50] 猫と犬')
     page.locator('#planEngine').select_option('llm')
@@ -217,7 +221,7 @@ def test_browser(base_url, directory):
         expect(page.locator('#renderLocal')).to_be_enabled()
         page.evaluate("""() => {window.savedVideoEncoder = window.VideoEncoder; window.VideoEncoder = undefined;}""")
         try:
-            export(page, directory, 'webm', 'portrait', 1.0)
+            portrait_webm = export(page, directory, 'webm', 'portrait', 1.0)
         finally:
             page.evaluate('() => {window.VideoEncoder = window.savedVideoEncoder; delete window.savedVideoEncoder;}')
         page.locator('#rangeStart').fill('')
@@ -235,6 +239,14 @@ def test_browser(base_url, directory):
             expect(page.locator('#localStatus')).to_contain_text('WebMを選択')
             print('H.264/AAC encoder unavailable. Verified explicit format fallback.', flush=True)
         path = export(page, directory, codec, 'landscape', 2.0)
+        converted = directory / 'portrait-converted.mp4'
+        conversion = [sys.executable, str(ROOT / 'convert_mp4.py'), str(portrait_webm), str(converted)]
+        subprocess.run(conversion, check=True)
+        inspect_video(converted, ({'h264'}, {'aac'}), (480, 854), 1.0)
+        original = converted.read_bytes()
+        assert subprocess.run(conversion, capture_output=True).returncode != 0
+        assert converted.read_bytes() == original
+
         # Blue source image is present at the same position in the shared preview and export.
         page.locator('#seekTimeline').evaluate("(input) => {input.value = 1; input.dispatchEvent(new Event('input'));}")
         page.wait_for_function('!document.querySelector("#player").seeking && document.querySelector("#player").currentTime === 1')
@@ -257,7 +269,7 @@ def test_browser(base_url, directory):
         page.close()
         page = context.new_page()
         page.goto(base_url + '/app/')
-        page.wait_for_function("caches.keys().then(keys => keys.includes('mv-studio-test-update') && !keys.includes('mv-studio-v3.2'))")
+        page.wait_for_function("caches.keys().then(keys => keys.includes('mv-studio-test-update') && !keys.includes('mv-studio-v3.2.1'))")
         assert not errors, errors
         assert not external, external
         context.close()

@@ -68,11 +68,37 @@
       let cursor = row.start;
       for (const g of row.characters) {
         const own = matched.get(g);
-        g.start = own ? Math.max(cursor, Math.min(row.end, own[0].start)) : cursor;
-        g.end = own ? Math.max(g.start, Math.min(row.end, own.at(-1).end)) : cursor;
         g.matched = Boolean(own);
         g.estimated = true;
+        if (!own) continue;
+        g.start = Math.max(cursor, Math.min(row.end, own[0].start));
+        g.end = Math.max(g.start, Math.min(row.end, own.at(-1).end));
         cursor = g.end;
+      }
+      // Distribute a gap across missing sung graphemes. Punctuation consumes no time.
+      cursor = row.start;
+      for (let i = 0; i < row.characters.length;) {
+        const g = row.characters[i];
+        if (g.matched) {
+          cursor = g.end;
+          i++;
+          continue;
+        }
+        let next = i + 1;
+        while (next < row.characters.length && !row.characters[next].matched) next++;
+        const gap = row.characters.slice(i, next);
+        const weights = gap.map(character => normalize(character.text).length);
+        const total = weights.reduce((sum, weight) => sum + weight, 0);
+        const interval = (row.characters[next]?.start ?? row.end) - cursor;
+        const start = cursor;
+        let elapsed = 0;
+        gap.forEach((character, index) => {
+          character.start = cursor;
+          elapsed += weights[index];
+          cursor = total ? start + interval * elapsed / total : start;
+          character.end = cursor;
+        });
+        i = next;
       }
     }
     return {method: 'whisper_word_character_interpolation', coverage: count / expected.length, lines: rows};

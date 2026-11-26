@@ -2,7 +2,7 @@ name: Publish app
 on:
   push:
     branches: [main]
-    paths: ['app/**', 'tests/**', 'align.py', '.github/workflows/pages.yml', '.github/workflows/test.yml']
+    paths: ['app/**', 'tests/**', 'align.py', 'convert_mp4.py', '.github/workflows/pages.yml', '.github/workflows/test.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
       - name: Version the Service Worker for this deployment
-        run: sed -i "s/mv-studio-v3.2/mv-studio-${GITHUB_SHA}/" app/sw.js
+        run: sed -i "s/mv-studio-v3.2.1/mv-studio-${GITHUB_SHA}/" app/sw.js
       - uses: actions/upload-pages-artifact@v3
         with:
           path: app

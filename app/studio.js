@@ -436,7 +436,7 @@ $('recognize').onclick=async()=>{
   candidate=null;$('syncReview').textContent='';$('applySync').disabled=true;
   let context;
   try{
-    const chunks=await runAI({action:'recognize'},[],async(signal,data)=>{
+    const chunks=await runAI({action:'recognize',model:$('recognitionModel').value},[],async(signal,data)=>{
       status('音源を読み込み中');
       context=new AudioContext({sampleRate:16000});
       const decoded=await context.decodeAudioData(await file.arrayBuffer());
@@ -464,7 +464,21 @@ $('recognize').onclick=async()=>{
       input.placeholder = '開始時刻（秒）';
       input.oninput = () => validateSync(false);
       label.htmlFor = input.id = 'candidateTime' + index;
-      review.append(label, input);
+      const audition = document.createElement('button');
+      audition.type = 'button';
+      audition.textContent = 'この時刻を試聴';
+      audition.setAttribute('aria-label', `${index + 1} 行目の時刻を試聴`);
+      audition.disabled = !Number.isFinite(input.valueAsNumber);
+      input.addEventListener('input', () => {
+        audition.disabled = !Number.isFinite(input.valueAsNumber);
+      });
+      audition.onclick = () => {
+        const time = input.valueAsNumber;
+        if (soundFile !== file || !Number.isFinite(time) || time < 0 || time >= audio.duration) return;
+        audio.currentTime = Math.max(0, time - .35);
+        audio.play().catch(error => status(error.message));
+      };
+      review.append(label, input, audition);
       candidate.inputs.push(input);
     }
     validateSync(false);
