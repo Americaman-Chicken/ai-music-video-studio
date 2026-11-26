@@ -21,7 +21,7 @@ class QuietHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == '/app/sw.js' and self.release > 1:
-            data = (ROOT / 'app/sw.js').read_text().replace('mv-studio-v3.5', 'mv-studio-test-update')
+            data = (ROOT / 'app/sw.js').read_text().replace('mv-studio-v3.5.1', 'mv-studio-test-update')
             self.send_response(200)
             self.send_header('Content-Type', 'text/javascript')
             self.send_header('Cache-Control', 'no-cache')
@@ -125,10 +125,25 @@ def test_ai_integration(browser, base_url, directory):
     with page.expect_download() as download:
         page.locator('#saveRawSubtitles').click()
     assert download.value.suggested_filename == 'recognized.srt'
+    page.locator('#lyrics').fill('夏の歌\n猫と犬\n君へ')
+    page.locator('#correctSubtitles').click()
+    expect(page.locator('#applySync')).to_have_text('時刻のある 2 行を適用')
+    expect(page.locator('#applySync')).to_be_enabled()
+    page.locator('#applySync').click()
+    expect(page.locator('#lyrics')).to_have_value('[00:00.20] 夏の歌\n猫と犬\n[00:01.00] 君へ')
+    page.locator('#candidateTime1').fill('1.50')
+    expect(page.locator('#applySync')).to_be_disabled()
+    expect(page.locator('#applySyncHint')).to_contain_text('3 行目')
+    page.locator('#player').evaluate('audio => {audio.currentTime = .7;}')
+    page.get_by_role('button', name='2 行目に再生位置を入れる').click()
+    expect(page.locator('#candidateTime1')).to_have_value('0.70')
+    page.locator('#applySync').click()
+    expect(page.locator('#lyrics')).to_have_value('[00:00.20] 夏の歌\n[00:00.70] 猫と犬\n[00:01.00] 君へ')
     page.locator('#lyrics').fill('猫と犬')
     page.locator('#recognize').click()
     expect(page.locator('#localStatus')).to_contain_text('手動またはタップ同期')
     expect(page.locator('#applySync')).to_be_disabled()
+    expect(page.locator('#applySyncHint')).to_contain_text('開始時刻が空欄')
     expect(page.locator('#lyrics')).to_have_value('猫と犬')
     page.locator('#candidateTime0').fill('0.5')
     page.get_by_role('button', name='1 行目の時刻を試聴').click()
@@ -344,7 +359,7 @@ def test_browser(base_url, directory):
         page.close()
         page = context.new_page()
         page.goto(base_url + '/app/')
-        page.wait_for_function("caches.keys().then(keys => keys.includes('mv-studio-test-update') && !keys.includes('mv-studio-v3.5'))")
+        page.wait_for_function("caches.keys().then(keys => keys.includes('mv-studio-test-update') && !keys.includes('mv-studio-v3.5.1'))")
         assert not errors, errors
         assert not external, external
         context.close()

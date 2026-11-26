@@ -55,6 +55,8 @@ async function applyMedia(file, files) {
     candidate = null;
     $('syncReview').replaceChildren();
     $('applySync').disabled = true;
+    $('applySyncHint').textContent = '';
+    $('applySync').textContent = '同期候補を適用';
     $('bpmstatus').textContent = '';
     $('sceneJson').value = '';
     $('sceneEditor').hidden = true;
@@ -374,7 +376,44 @@ function renderTracks(rows){
     root.append(line);
   }
 }
-function timeline(){const div=$('timeline');div.replaceChildren();const rows=cues(audio.duration||1);renderTracks(rows);rows.forEach((q,i)=>{const row=document.createElement('div'),time=document.createElement('input'),text=document.createElement('input'),seek=document.createElement('button');time.type='number';time.min=0;time.step=.01;time.value=q.start.toFixed(2);text.value=q.text;seek.textContent='試聴';seek.onclick=()=>{audio.currentTime=+time.value};const update=()=>{rows[i]={start:Math.max(0,+time.value||0),text:text.value};$('lyrics').value=rows.map(r=>MVCore.stamp(r.start)+' '+r.text).join('\n');$('timing').value='manual';aligned=[];renderTracks(rows);repaint()};time.onchange=text.onchange=update;row.append(time,text,seek);div.append(row)})};$('refreshTimeline').onclick=timeline;
+function timeline(){
+  const div=$('timeline');
+  div.replaceChildren();
+  const rows=cues(audio.duration||1);
+  renderTracks(rows);
+  rows.forEach((q,i)=>{
+    const row=document.createElement('div'), time=document.createElement('input');
+    const text=document.createElement('input'), seek=document.createElement('button');
+    time.type='number';time.min=0;time.step=.01;time.value=q.start.toFixed(2);
+    text.value=q.text;seek.textContent='試聴';seek.onclick=()=>{audio.currentTime=+time.value};
+    let original=q;
+    const update=()=>{
+      const replacement={start:Math.max(0,+time.value||0),text:text.value};
+      const stamp=entry=>MVCore.stamp(entry.start)+' '+entry.text;
+      let lyrics;
+      if($('timing').value==='manual'){
+        let replaced=false;
+        lyrics=$('lyrics').value.split(/\r?\n/).map(line=>{
+          if(replaced)return line;
+          const entries=MVCore.parseLrc(line);
+          const index=entries.findIndex(entry=>entry.start===original.start&&entry.text===original.text);
+          if(index<0)return line;
+          entries[index]=replacement;replaced=true;
+          return entries.map(stamp).join('\n');
+        }).join('\n');
+      }else{
+        const next=rows.slice();next[i]=replacement;
+        lyrics=next.map(stamp).join('\n');
+      }
+      original=MVCore.parseLrc(stamp(replacement))[0]||replacement;
+      $('lyrics').value=lyrics;$('timing').value='manual';aligned=[];
+      validateSync(false);renderTracks(cues(audio.duration||1));repaint();
+    };
+    time.onchange=text.onchange=update;
+    row.append(time,text,seek);div.append(row);
+  });
+}
+$('refreshTimeline').onclick=timeline;
 $('lyrics').addEventListener('input',()=>renderTracks(cues(audio.duration||1)));
 $('timing').addEventListener('change',timeline);
 $('stamp').onclick=()=>{$('lyrics').value+=($('lyrics').value?'\n':'')+MVCore.stamp(audio.currentTime)+' ';$('timing').value='manual';$('lyrics').focus()};
@@ -489,7 +528,8 @@ $('recognize').onclick=async()=>{
     : !Number.isFinite(audio.duration) ? '楽曲の読み込みが完了してから押してください。' : '';
   if(notice){$('syncStatus').textContent=notice;status(notice);return}
   syncActive=true;
-  candidate=null;$('syncReview').textContent='';$('applySync').disabled=true;
+  candidate=null;$('syncReview').textContent='';
+  validateSync(false);
   let context;
   try{
     const ranges=readVocalRanges(audio.duration);
@@ -531,7 +571,7 @@ function renderSubtitleDraft(){
 }
 function reviewSubtitles(){
   candidate=null;
-  $('applySync').disabled=true;
+  validateSync(false);
   $('syncReview').replaceChildren();
   const file=soundFile, lyrics=$('lyrics').value, lines=lyricInput();
   const {rangeKey,subtitles}=subtitleDraft;
@@ -570,7 +610,15 @@ function reviewSubtitles(){
       original.textContent=line.recognizedText? '認識字幕: '+line.recognizedText:'対応する認識字幕なし';
       review.append(original);
     }
-    review.append(input, audition);
+    const usePlayhead = document.createElement('button');
+    usePlayhead.type = 'button';
+    usePlayhead.textContent = '再生位置を入れる';
+    usePlayhead.setAttribute('aria-label', `${index + 1} 行目に再生位置を入れる`);
+    usePlayhead.onclick = () => {
+      input.value = audio.currentTime.toFixed(2);
+      input.dispatchEvent(new Event('input'));
+    };
+    review.append(input, audition, usePlayhead);
     candidate.inputs.push(input);
   }
   validateSync(false);
@@ -588,19 +636,46 @@ $('correctSubtitles').onclick=()=>{
   finally{syncActive=false;}
 };
 function validateSync(apply) {
-  if (!candidate || candidate.file !== soundFile || candidate.lyrics !== $('lyrics').value || candidate.rangeKey !== $('introEnd').value+'/'+$('instrumentals').value) {
-    $('applySync').disabled = true;
+  const button = $('applySync');
+  const hint = $('applySyncHint');
+  button.textContent = '同期候補を適用';
+  button.disabled = true;
+  if (!candidate) {
+    hint.textContent = '';
     return;
   }
-  const starts = candidate.inputs.map(input => input.valueAsNumber);
-  const valid = starts.every((start,index) => Number.isFinite(start) && start >= 0 &&
-    candidate.ranges.some(range => start >= range.start && start < range.end) && (!index || start > starts[index - 1]));
-  $('applySync').disabled = !valid;
-  if (!valid || !apply) return;
-  aligned = candidate.lines.map((line,index) => {
-    const start = starts[index];
+  if (candidate.file !== soundFile || candidate.lyrics !== $('lyrics').value || candidate.rangeKey !== currentVocalKey()) {
+    hint.textContent = '歌詞や認識範囲が変わりました。字幕を再照合してください。';
+    return;
+  }
+  const starts = candidate.inputs.map(input => input.value === '' && !input.validity.badInput ? null : Math.round(input.valueAsNumber * 100) / 100);
+  const timed = [];
+  let message = '';
+  for (const [index, start] of starts.entries()) {
+    if (start === null) continue;
     const range = candidate.ranges.find(item => start >= item.start && start < item.end);
-    const limit = Math.min(starts[index + 1] ?? audio.duration, range.end);
+    if (!range) {
+      message = `${index + 1} 行目に歌唱区間内の開始時刻を入れてください。`;
+      break;
+    }
+    if (timed.length && start <= timed[timed.length - 1].start) {
+      message = `${index + 1} 行目の開始時刻を前の行より後にしてください。`;
+      break;
+    }
+    timed.push({index, start, range});
+  }
+  if (message || !timed.length) {
+    hint.textContent = message || '開始時刻が空欄です。秒数を入れるか、音声を合わせて「再生位置を入れる」を押してください。';
+    return;
+  }
+  const missing = starts.length - timed.length;
+  if (missing) button.textContent = `時刻のある ${timed.length} 行を適用`;
+  hint.textContent = missing ? `時刻が空欄の ${missing} 行は歌詞欄に残ります。` : '';
+  button.disabled = false;
+  if (!apply) return;
+  aligned = timed.map(({index, start, range}, offset) => {
+    const line = candidate.lines[index];
+    const limit = Math.min(timed[offset + 1]?.start ?? audio.duration, range.end);
     if (line.start === null || line.coverage < .4) return {...line,start,end:start,characters:[],words:[]};
     const delta = start - line.start;
     const shift = segment => ({
@@ -610,21 +685,27 @@ function validateSync(apply) {
     });
     return {...shift(line),characters:line.characters.map(shift),words:line.words.map(shift)};
   });
-  candidate = null;
-  $('syncReview').replaceChildren();
-  $('applySync').disabled = true;
+  const lyrics = candidate.lines.map((line, index) => starts[index] === null
+    ? line.text : MVCore.stamp(starts[index]) + ' ' + line.text).join('\n');
+  if (missing) candidate.lyrics = lyrics;
+  else {
+    candidate = null;
+    $('syncReview').replaceChildren();
+  }
   if (analysis) {
     const sections = MVCore.labelSections(analysis.sections,aligned);
     analysis.sections = sections.map((section,index) => analysis.sections[index].edited ? analysis.sections[index] : section);
     renderSections();
   }
-  $('lyrics').value = aligned.map(row => MVCore.stamp(row.start) + ' ' + row.text).join('\n');
+  $('lyrics').value = lyrics;
+  validateSync(false);
   renderSubtitleDraft();
   $('timing').value = 'manual';
   timeline();
   repaint();
-  $('syncStatus').textContent='同期候補を適用しました。';
-  status('同期候補を適用しました');
+  const notice = missing ? `${timed.length} 行を適用しました。残り ${missing} 行に時刻を入れられます。` : '同期候補を適用しました。';
+  $('syncStatus').textContent=notice;
+  status(notice);
 }
 $('lyrics').addEventListener('input', () => {validateSync(false);renderSubtitleDraft();});
 for(const id of ['introEnd','instrumentals']){
@@ -673,7 +754,7 @@ $('renderLocal').onclick=async()=>{
   if(mediaLoads||analyzing||projectBusy)return status('読み込みまたは解析の完了後に書き出してください');
   if(!soundFile)return status('音源を選択してください');
   if($('timing').value==='auto'&&lyricInput().length)return status('同期候補を適用するか、手動同期・仮同期を選択してください');
-  if($('timing').value==='manual'&&$('lyrics').value.split(/\r?\n/).some(line=>line.trim()&&!MVCore.parseLrc(line).length))return status('全行に有効な時刻を設定してください');
+  if($('timing').value==='manual'&&$('lyrics').value.split(/\r?\n/).some(line=>line.trim()&&!MVCore.parseLrc(line).length))return status('書き出す前に、歌詞欄の時刻が空欄の行を同期してください。');
   const mp4=$('format').value==='mp4';
   const mime=window.MediaRecorder&&canvas.captureStream&&(mp4?['video/mp4;codecs="avc1.640028,mp4a.40.2"','video/mp4;codecs="avc1.42001f,mp4a.40.2"']:['video/webm;codecs=vp8,opus','video/webm']).find(type=>MediaRecorder.isTypeSupported(type));
   const controller=new AbortController(), signal=controller.signal;
