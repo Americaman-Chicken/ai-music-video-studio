@@ -331,7 +331,7 @@ function renderTracks(rows){
   }
 }
 function timeline(){const div=$('timeline');div.replaceChildren();const rows=cues(audio.duration||1);renderTracks(rows);rows.forEach((q,i)=>{const row=document.createElement('div'),time=document.createElement('input'),text=document.createElement('input'),seek=document.createElement('button');time.type='number';time.min=0;time.step=.01;time.value=q.start.toFixed(2);text.value=q.text;seek.textContent='試聴';seek.onclick=()=>{audio.currentTime=+time.value};const update=()=>{rows[i]={start:Math.max(0,+time.value||0),text:text.value};$('lyrics').value=rows.map(r=>MVCore.stamp(r.start)+' '+r.text).join('\n');$('timing').value='manual';aligned=[];renderTracks(rows);repaint()};time.onchange=text.onchange=update;row.append(time,text,seek);div.append(row)})};$('refreshTimeline').onclick=timeline;
-$('lyrics').addEventListener('change',timeline);
+$('lyrics').addEventListener('input',()=>renderTracks(cues(audio.duration||1)));
 $('timing').addEventListener('change',timeline);
 $('stamp').onclick=()=>{$('lyrics').value+=($('lyrics').value?'\n':'')+MVCore.stamp(audio.currentTime)+' ';$('timing').value='manual';$('lyrics').focus()};
 $('importAlignment').onchange=async()=>{try{const p=JSON.parse(await $('importAlignment').files[0].text());if(!Array.isArray(p.lines)||p.lines.some(r=>typeof r.text!=='string'||!Number.isFinite(r.start)||!Array.isArray(r.characters)))throw Error('同期JSON形式が不正');aligned=p.lines;$('lyrics').value=aligned.map(r=>MVCore.stamp(r.start)+' '+r.text).join('\n');$('timing').value='manual';timeline();status('文字同期を読み込みました（一部は推定）')}catch(e){status(e.message)}};
