@@ -334,7 +334,7 @@ function timeline(){const div=$('timeline');div.replaceChildren();const rows=cue
 $('lyrics').addEventListener('input',()=>renderTracks(cues(audio.duration||1)));
 $('timing').addEventListener('change',timeline);
 $('stamp').onclick=()=>{$('lyrics').value+=($('lyrics').value?'\n':'')+MVCore.stamp(audio.currentTime)+' ';$('timing').value='manual';$('lyrics').focus()};
-$('importAlignment').onchange=async()=>{try{const p=JSON.parse(await $('importAlignment').files[0].text());if(!Array.isArray(p.lines)||p.lines.some(r=>typeof r.text!=='string'||!Number.isFinite(r.start)||!Array.isArray(r.characters)))throw Error('同期JSON形式が不正');aligned=p.lines;$('lyrics').value=aligned.map(r=>MVCore.stamp(r.start)+' '+r.text).join('\n');$('timing').value='manual';timeline();status('文字同期を読み込みました（一部は推定）')}catch(e){status(e.message)}};
+$('importAlignment').onchange=async()=>{try{const p=JSON.parse(await $('importAlignment').files[0].text());if(!Array.isArray(p?.lines)||p.lines.some(r=>typeof r?.text!=='string'||!Number.isFinite(r.start)||r.start<0||!Array.isArray(r.characters)||r.characters.some(c=>typeof c?.text!=='string'||(c.start!=null&&!Number.isFinite(c.start))||(c.end!=null&&!Number.isFinite(c.end)))))throw Error('同期JSON形式が不正');aligned=p.lines;$('lyrics').value=aligned.map(r=>MVCore.stamp(r.start)+' '+r.text).join('\n');$('timing').value='manual';timeline();status('文字同期を読み込みました（一部は推定）')}catch(e){status(e.message)}};
 const storage=(mode,operation)=>MVStorage.transaction(mode,operation);
 async function listProjects(){
   const entries=await storage('readonly',store=>{
@@ -553,10 +553,8 @@ $('renderLocal').onclick=async()=>{
   if(!soundFile)return status('音源を選択してください');
   if($('timing').value==='auto'&&lyricInput().length)return status('同期候補を適用するか、手動同期・仮同期を選択してください');
   if($('timing').value==='manual'&&$('lyrics').value.split(/\r?\n/).some(line=>line.trim()&&!MVCore.parseLrc(line).length))return status('全行に有効な時刻を設定してください');
-  if(!window.MediaRecorder||!canvas.captureStream)return status('このブラウザは録画出力に非対応です');
   const mp4=$('format').value==='mp4';
-  const mime=(mp4?['video/mp4;codecs="avc1.640028,mp4a.40.2"','video/mp4;codecs="avc1.42001f,mp4a.40.2"']:['video/webm;codecs=vp8,opus','video/webm']).find(type=>MediaRecorder.isTypeSupported(type));
-  if(!mime)return status(mp4?'H.264/AAC出力に非対応です。WebMを選択してください。':'WebM出力に非対応です');
+  const mime=window.MediaRecorder&&canvas.captureStream&&(mp4?['video/mp4;codecs="avc1.640028,mp4a.40.2"','video/mp4;codecs="avc1.42001f,mp4a.40.2"']:['video/webm;codecs=vp8,opus','video/webm']).find(type=>MediaRecorder.isTypeSupported(type));
   const controller=new AbortController(), signal=controller.signal;
   let context,stream,destination,recorder,source;
   const controls=new Map();
@@ -571,11 +569,33 @@ $('renderLocal').onclick=async()=>{
     $('cancelRender').disabled=false;
     audio.pause();
     const [w,h]=size();canvas.width=w;canvas.height=h;
-    context=new AudioContext();
-    await context.resume();
+    status('書き出し準備中');
+    context=new AudioContext({sampleRate:48000});
     const buffer=await context.decodeAudioData(await soundFile.arrayBuffer());
     signal.throwIfAborted();
     const [from,to]=exportRange(buffer.duration), length=to-from;
+    const exporter=await import('./video-export.mjs');
+    const options=await exporter.encodingOptions(mp4,w,h,buffer.numberOfChannels);
+    signal.throwIfAborted();
+    if(options){
+      try {
+        const file=await exporter.encode(canvas,buffer,from,to,options,
+          time=>draw(time,buffer.duration),
+          progress=>status(`書き出し ${Math.floor(progress*100)}%`),signal);
+        download(file,`MV.${mp4?'mp4':'webm'}`);
+        status('書き出し完了');
+        return;
+      }catch(error){
+        if(signal.aborted||!mime)throw error;
+        status('リアルタイム録画で再試行します');
+      }
+    }
+    if(!mime){
+      status(mp4?'H.264/AAC出力に非対応です。WebMを選択してください。':'WebM出力に非対応です');
+      return;
+    }
+    await context.resume();
+    signal.throwIfAborted();
     destination=context.createMediaStreamDestination();
     source=context.createBufferSource();source.buffer=buffer;source.connect(destination);
     draw(from,buffer.duration);

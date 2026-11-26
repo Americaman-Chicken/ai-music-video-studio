@@ -34,7 +34,9 @@ self.onmessage = async ({data}) => {
       }
       self.postMessage({result: chunks});
     } else if (data.action === 'plan') {
-      if (!navigator.gpu) throw Error('WebGPUを利用できません');
+      const adapter = await navigator.gpu?.requestAdapter();
+      if (!adapter) throw Error('WebGPUを利用できません');
+      if (!adapter.features.has('shader-f16')) throw Error('この端末のWebGPUは演出モデルの演算形式に非対応です');
       const {CreateMLCEngine} = await import('https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.79/+esm');
       const engine = await CreateMLCEngine('Qwen2.5-0.5B-Instruct-q4f16_1-MLC', {
         initProgressCallback: event => progress(`演出モデルを準備中 ${Math.floor(event.progress * 100)}%`),
